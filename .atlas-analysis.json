@@ -1,0 +1,187 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Lamassu IoT",
+  "projectDescription": "IoT-first PKI platform for industrial environments with automated certificate lifecycle management and cloud/edge integration",
+  "theme": "aspen",
+  "primaryColor": "#9c9c9c",
+  "lightColor": "#434242",
+  "darkColor": "#cecece",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/overview",
+              "deployment/monolithic",
+              "deployment/kubernetes",
+              "deployment/configuration"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/certificate-authorities",
+              "concepts/device-management",
+              "concepts/key-management",
+              "concepts/enrollment"
+            ]
+          },
+          {
+            "group": "User Guides",
+            "pages": [
+              "guides/managing-cas",
+              "guides/device-lifecycle",
+              "guides/est-enrollment",
+              "guides/filtering-sorting",
+              "guides/issuance-profiles"
+            ]
+          },
+          {
+            "group": "Engines & Connectors",
+            "pages": [
+              "engines/overview",
+              "engines/crypto-engines",
+              "engines/storage-engines",
+              "engines/event-bus",
+              "connectors/aws-iot"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/authentication",
+              "security/authorization",
+              "security/best-practices"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/backup-restore",
+              "operations/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication",
+              "api/filtering"
+            ]
+          },
+          {
+            "group": "Certificate Authority API",
+            "pages": [
+              "api/ca/overview",
+              "api/ca/cas",
+              "api/ca/certificates",
+              "api/ca/issuance-profiles",
+              "api/ca/stats"
+            ]
+          },
+          {
+            "group": "Device Manager API",
+            "pages": [
+              "api/device-manager/overview",
+              "api/device-manager/devices",
+              "api/device-manager/device-groups",
+              "api/device-manager/stats"
+            ]
+          },
+          {
+            "group": "DMS Manager API",
+            "pages": [
+              "api/dms-manager/overview",
+              "api/dms-manager/dms",
+              "api/dms-manager/est-enrollment"
+            ]
+          },
+          {
+            "group": "Key Management API",
+            "pages": [
+              "api/kms/overview",
+              "api/kms/engines",
+              "api/kms/keys",
+              "api/kms/operations"
+            ]
+          },
+          {
+            "group": "Alerts API",
+            "pages": [
+              "api/alerts/overview",
+              "api/alerts/endpoints"
+            ]
+          },
+          {
+            "group": "Validation Authority API",
+            "pages": [
+              "api/va/overview",
+              "api/va/endpoints"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
+        "groups": [
+          {
+            "group": "Go SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/installation",
+              "sdk/ca-client",
+              "sdk/device-manager-client",
+              "sdk/dms-manager-client",
+              "sdk/kms-client"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Industrial-grade PKI with hardware-backed key storage",
+    "Automated certificate lifecycle management",
+    "EST (RFC 7030) enrollment protocol support",
+    "Device identity management for IoT fleets",
+    "Pluggable crypto engines (Software, AWS KMS, PKCS#11, Vault)",
+    "Modular storage and event bus architecture",
+    "Advanced filtering with JSONPath support",
+    "Cloud and edge ready deployment options",
+    "AWS IoT integration",
+    "Certificate issuance profiles and policies"
+  ],
+  "publicApiSurface": [
+    "POST /api/ca/v1/cas - Create Certificate Authority",
+    "GET /api/ca/v1/certificates - List certificates",
+    "POST /api/ca/v1/certificates/sign - Sign certificate request",
+    "GET /api/devmanager/v1/devices - List devices",
+    "POST /api/devmanager/v1/devices - Register device",
+    "GET /api/devmanager/v1/device-groups - List device groups",
+    "GET /api/dmsmanager/v1/dms - List DMS instances",
+    "POST /.well-known/est/{dms-id}/simpleenroll - EST enrollment",
+    "POST /.well-known/est/{dms-id}/simplereenroll - EST re-enrollment",
+    "GET /api/kms/v1/engines - List crypto engines",
+    "POST /api/kms/v1/keys - Create cryptographic key",
+    "POST /api/kms/v1/keys/{id}/sign - Sign data with key",
+    "GET /api/alerts/v1/alerts - List alerts",
+    "GET /api/va/v1/validate - Validate certificate"
+  ]
+}
