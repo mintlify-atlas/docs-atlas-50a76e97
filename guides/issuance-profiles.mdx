@@ -1,0 +1,526 @@
+---
+title: Configuring Issuance Profiles
+description: Create and manage certificate issuance profile templates in Lamassu
+---
+
+Issuance profiles define the certificate policies and constraints applied when issuing certificates. They act as reusable templates that control validity periods, key usage, extended key usage, subject handling, and cryptographic enforcement.
+
+## Understanding Issuance Profiles
+
+An issuance profile specifies:
+
+- **Validity period**: How long issued certificates remain valid
+- **Key usage**: Certificate purpose (signing, encryption, etc.)
+- **Extended key usage**: Specific use cases (TLS server, TLS client, code signing)
+- **Subject handling**: Whether to honor or override CSR subject fields
+- **Crypto enforcement**: Restrictions on key types and sizes
+- **CA behavior**: Whether certificates are issued as CAs (with `basicConstraints`)
+
+## Create an Issuance Profile
+
+<Steps>
+  <Step title="Define profile parameters">
+    Create a JSON configuration for the profile:
+
+    ```json
+    {
+      "id": "iot-device-profile",
+      "name": "IoT Device Certificate Profile",
+      "description": "Standard profile for IoT device certificates",
+      "validity": {
+        "type": "Duration",
+        "duration": "8760h"
+      },
+      "sign_as_ca": false,
+      "honor_key_usage": false,
+      "key_usage": {
+        "digital_signature": true,
+        "key_encipherment": true,
+        "content_commitment": false,
+        "data_encipherment": false,
+        "key_agreement": false,
+        "cert_sign": false,
+        "crl_sign": false
+      },
+      "honor_extended_key_usages": false,
+      "extended_key_usages": [
+        "clientAuth",
+        "serverAuth"
+      ],
+      "honor_subject": true,
+      "subject": {
+        "organization": "Acme Corp",
+        "country": "US"
+      },
+      "honor_extensions": false,
+      "crypto_enforcement": {
+        "enabled": true,
+        "allow_rsa_keys": true,
+        "allowed_rsa_key_sizes": [2048, 4096],
+        "allow_ecdsa_keys": true,
+        "allowed_ecdsa_key_sizes": [256, 384]
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Create the profile">
+    ```bash
+    curl -X POST https://lamassu.example.com/api/ca/v1/profiles \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @iot-device-profile.json
+    ```
+
+    Response:
+    ```json
+    {
+      "id": "iot-device-profile",
+      "name": "IoT Device Certificate Profile",
+      "description": "Standard profile for IoT device certificates",
+      "validity": {
+        "type": "Duration",
+        "duration": "8760h"
+      }
+      // ... full profile returned
+    }
+    ```
+  </Step>
+</Steps>
+
+## Profile Configuration Fields
+
+### Validity
+
+Defines how long certificates remain valid.
+
+<Tabs>
+  <Tab title="Duration">
+    Specify validity as a duration from issuance time:
+
+    ```json
+    {
+      "validity": {
+        "type": "Duration",
+        "duration": "8760h"  // 1 year
+      }
+    }
+    ```
+
+    Common durations:
+    - `720h` - 30 days
+    - `2160h` - 90 days
+    - `8760h` - 1 year
+    - `26280h` - 3 years
+    - `87600h` - 10 years
+  </Tab>
+
+  <Tab title="Absolute Time">
+    Specify an exact expiration timestamp:
+
+    ```json
+    {
+      "validity": {
+        "type": "Time",
+        "time": "2030-12-31T23:59:59Z"
+      }
+    }
+    ```
+
+    <Note>
+      Absolute time validity is useful for synchronized certificate lifecycles or compliance requirements.
+    </Note>
+  </Tab>
+</Tabs>
+
+### Key Usage
+
+Defines how the certificate key can be used.
+
+```json
+{
+  "honor_key_usage": false,  // Ignore CSR key usage, enforce profile
+  "key_usage": {
+    "digital_signature": true,      // Sign data
+    "key_encipherment": true,       // Encrypt keys
+    "content_commitment": false,    // Non-repudiation
+    "data_encipherment": false,     // Encrypt data directly
+    "key_agreement": false,         // Key agreement (ECDH)
+    "cert_sign": false,             // Sign certificates (CA only)
+    "crl_sign": false               // Sign CRLs (CA only)
+  }
+}
+```
+
+<Warning>
+  If `honor_key_usage` is `true`, the CSR's key usage will be used instead of the profile's settings. Set to `false` to enforce profile policy.
+</Warning>
+
+### Extended Key Usage
+
+Specifies the purposes for which the certificate can be used.
+
+```json
+{
+  "honor_extended_key_usages": false,  // Enforce profile EKU
+  "extended_key_usages": [
+    "serverAuth",        // TLS server authentication
+    "clientAuth",        // TLS client authentication
+    "codeSigning",       // Code signing
+    "emailProtection",   // Email protection (S/MIME)
+    "timeStamping",      // Time stamping
+    "ocspSigning"        // OCSP signing
+  ]
+}
+```
+
+Common combinations:
+
+<CodeGroup>
+```json IoT Device (mTLS)
+{
+  "extended_key_usages": ["clientAuth", "serverAuth"]
+}
+```
+
+```json Web Server
+{
+  "extended_key_usages": ["serverAuth"]
+}
+```
+
+```json Code Signing
+{
+  "extended_key_usages": ["codeSigning"]
+}
+```
+
+```json Email Certificate
+{
+  "extended_key_usages": ["emailProtection"]
+}
+```
+</CodeGroup>
+
+### Subject Handling
+
+Controls whether CSR subject fields are honored or overridden.
+
+```json
+{
+  "honor_subject": true,  // Use CSR subject fields
+  "subject": {
+    "common_name": "",              // Typically from CSR
+    "organization": "Acme Corp",   // Enforced by profile
+    "organization_unit": "IoT",    // Enforced by profile
+    "country": "US",               // Enforced by profile
+    "state": "California",
+    "locality": "San Francisco"
+  }
+}
+```
+
+**Behavior**:
+- `honor_subject: true` - Merge CSR subject with profile subject (profile fields take precedence for non-empty values)
+- `honor_subject: false` - Completely ignore CSR subject, use only profile subject
+
+### CA Behavior
+
+Control whether issued certificates can act as CAs.
+
+```json
+{
+  "sign_as_ca": false  // Standard end-entity certificate
+}
+```
+
+```json
+{
+  "sign_as_ca": true  // Certificate can sign other certificates (subordinate CA)
+}
+```
+
+<Warning>
+  Only set `sign_as_ca: true` for CA issuance profiles. End-entity certificates (devices, servers) should always use `false`.
+</Warning>
+
+### Crypto Enforcement
+
+Restrict the types and sizes of cryptographic keys allowed.
+
+```json
+{
+  "crypto_enforcement": {
+    "enabled": true,
+    "allow_rsa_keys": true,
+    "allowed_rsa_key_sizes": [2048, 3072, 4096],
+    "allow_ecdsa_keys": true,
+    "allowed_ecdsa_key_sizes": [256, 384, 521]
+  }
+}
+```
+
+**Example: RSA only, minimum 2048 bits**
+```json
+{
+  "crypto_enforcement": {
+    "enabled": true,
+    "allow_rsa_keys": true,
+    "allowed_rsa_key_sizes": [2048, 4096],
+    "allow_ecdsa_keys": false
+  }
+}
+```
+
+**Example: ECDSA only, P-256**
+```json
+{
+  "crypto_enforcement": {
+    "enabled": true,
+    "allow_rsa_keys": false,
+    "allow_ecdsa_keys": true,
+    "allowed_ecdsa_key_sizes": [256]
+  }
+}
+```
+
+## Profile Templates
+
+Here are common profile configurations for typical use cases:
+
+<AccordionGroup>
+  <Accordion title="IoT Device Certificate">
+    ```json
+    {
+      "id": "iot-device",
+      "name": "IoT Device Certificate",
+      "validity": {"type": "Duration", "duration": "8760h"},
+      "sign_as_ca": false,
+      "honor_key_usage": false,
+      "key_usage": {
+        "digital_signature": true,
+        "key_encipherment": true
+      },
+      "extended_key_usages": ["clientAuth", "serverAuth"],
+      "honor_subject": true,
+      "subject": {"organization": "Acme Corp"},
+      "crypto_enforcement": {
+        "enabled": true,
+        "allow_rsa_keys": true,
+        "allowed_rsa_key_sizes": [2048, 4096],
+        "allow_ecdsa_keys": true,
+        "allowed_ecdsa_key_sizes": [256]
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="TLS Server Certificate">
+    ```json
+    {
+      "id": "tls-server",
+      "name": "TLS Server Certificate",
+      "validity": {"type": "Duration", "duration": "2160h"},
+      "sign_as_ca": false,
+      "honor_key_usage": false,
+      "key_usage": {
+        "digital_signature": true,
+        "key_encipherment": true
+      },
+      "extended_key_usages": ["serverAuth"],
+      "honor_subject": true,
+      "crypto_enforcement": {
+        "enabled": true,
+        "allow_rsa_keys": true,
+        "allowed_rsa_key_sizes": [2048, 4096],
+        "allow_ecdsa_keys": true,
+        "allowed_ecdsa_key_sizes": [256, 384]
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Subordinate CA Certificate">
+    ```json
+    {
+      "id": "subordinate-ca",
+      "name": "Subordinate CA Certificate",
+      "validity": {"type": "Duration", "duration": "43800h"},
+      "sign_as_ca": true,
+      "honor_key_usage": false,
+      "key_usage": {
+        "digital_signature": true,
+        "cert_sign": true,
+        "crl_sign": true
+      },
+      "extended_key_usages": [],
+      "honor_subject": true,
+      "crypto_enforcement": {
+        "enabled": true,
+        "allow_rsa_keys": true,
+        "allowed_rsa_key_sizes": [4096],
+        "allow_ecdsa_keys": false
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Code Signing Certificate">
+    ```json
+    {
+      "id": "code-signing",
+      "name": "Code Signing Certificate",
+      "validity": {"type": "Duration", "duration": "8760h"},
+      "sign_as_ca": false,
+      "honor_key_usage": false,
+      "key_usage": {
+        "digital_signature": true,
+        "content_commitment": true
+      },
+      "extended_key_usages": ["codeSigning"],
+      "honor_subject": true,
+      "crypto_enforcement": {
+        "enabled": true,
+        "allow_rsa_keys": true,
+        "allowed_rsa_key_sizes": [3072, 4096],
+        "allow_ecdsa_keys": true,
+        "allowed_ecdsa_key_sizes": [256, 384]
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## List Issuance Profiles
+
+```bash
+curl https://lamassu.example.com/api/ca/v1/profiles \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+With filtering and sorting:
+
+```bash
+# Filter by name
+curl "https://lamassu.example.com/api/ca/v1/profiles?filter=name[ct]=device" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Sort by name
+curl "https://lamassu.example.com/api/ca/v1/profiles?sort_by=name&sort_mode=asc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Get a Specific Profile
+
+```bash
+curl https://lamassu.example.com/api/ca/v1/profiles/iot-device-profile \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Update an Issuance Profile
+
+Modify an existing profile:
+
+```bash
+curl -X PUT https://lamassu.example.com/api/ca/v1/profiles/iot-device-profile \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "iot-device-profile",
+    "name": "IoT Device Certificate Profile",
+    "description": "Updated profile with stricter crypto requirements",
+    "validity": {"type": "Duration", "duration": "4380h"},
+    "sign_as_ca": false,
+    "honor_key_usage": false,
+    "key_usage": {
+      "digital_signature": true,
+      "key_encipherment": true
+    },
+    "extended_key_usages": ["clientAuth", "serverAuth"],
+    "honor_subject": true,
+    "crypto_enforcement": {
+      "enabled": true,
+      "allow_rsa_keys": false,
+      "allow_ecdsa_keys": true,
+      "allowed_ecdsa_key_sizes": [256]
+    }
+  }'
+```
+
+<Note>
+  Updating a profile only affects **new certificates**. Existing certificates issued with the old profile are not modified.
+</Note>
+
+## Delete an Issuance Profile
+
+<Warning>
+  Deleting a profile that is in use by CAs or referenced in DMS configurations will cause certificate issuance failures.
+</Warning>
+
+```bash
+curl -X DELETE https://lamassu.example.com/api/ca/v1/profiles/iot-device-profile \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Use Profiles When Issuing Certificates
+
+### Sign a CSR with a Profile
+
+```bash
+curl -X POST https://lamassu.example.com/api/ca/v1/cas/issuing-ca-01/sign \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "csr": "<base64-encoded-csr>",
+    "profile_id": "iot-device-profile"
+  }'
+```
+
+### Create a CA with a Profile
+
+```bash
+curl -X POST https://lamassu.example.com/api/ca/v1/cas \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "issuing-ca-01",
+    "parent_id": "root-ca",
+    "subject": {"common_name": "Issuing CA 01"},
+    "profile_id": "subordinate-ca",
+    "ca_issuance_profile_id": "iot-device-profile"
+  }'
+```
+
+- `profile_id`: Profile used to issue **this CA's certificate**
+- `ca_issuance_profile_id`: Default profile used when **this CA issues certificates**
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Descriptive Names" icon="tag">
+    Name profiles clearly to indicate their purpose: `iot-device`, `tls-server`, `subordinate-ca`.
+  </Card>
+
+  <Card title="Enforce Crypto Standards" icon="shield">
+    Always enable `crypto_enforcement` to prevent weak keys from being used.
+  </Card>
+
+  <Card title="Set Appropriate Validity" icon="clock">
+    IoT devices: 1-2 years. Web servers: 90 days. CAs: 5-10 years.
+  </Card>
+
+  <Card title="Minimize EKU Scope" icon="lock">
+    Only grant necessary extended key usages. Don't use `serverAuth` for device certificates unless required.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Managing CAs" icon="building-columns" href="/guides/managing-cas">
+    Apply profiles when creating CAs
+  </Card>
+  <Card title="EST Enrollment" icon="certificate" href="/guides/est-enrollment">
+    Use profiles in EST enrollment workflows
+  </Card>
+</CardGroup>

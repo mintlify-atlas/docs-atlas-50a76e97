@@ -1,0 +1,109 @@
+---
+title: 'Certificate Authority API'
+description: 'Manage certificate authorities, certificates, and issuance profiles'
+icon: 'certificate'
+---
+
+## Overview
+
+The Certificate Authority (CA) API provides comprehensive functionality for managing PKI infrastructure in the Lamassu IoT Platform. This API enables you to create and manage certificate authorities, issue and revoke certificates, configure issuance profiles, and monitor statistics.
+
+## Base URL
+
+```
+/api/ca/v1
+```
+
+## Authentication
+
+All endpoints require JWT Bearer token authentication:
+
+```bash
+Authorization: Bearer <your-jwt-token>
+```
+
+## Core Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Certificate Authorities" icon="building-columns" href="/api/ca/cas">
+    Create, import, and manage certificate authorities
+  </Card>
+  <Card title="Certificates" icon="file-certificate" href="/api/ca/certificates">
+    Sign, list, revoke, and manage certificates
+  </Card>
+  <Card title="Issuance Profiles" icon="id-card" href="/api/ca/issuance-profiles">
+    Configure certificate issuance templates
+  </Card>
+  <Card title="Statistics" icon="chart-line" href="/api/ca/stats">
+    Monitor CA and certificate metrics
+  </Card>
+</CardGroup>
+
+## Key Features
+
+- **CA Lifecycle Management**: Create new CAs, import existing ones, reissue CA certificates
+- **Certificate Operations**: Sign CSRs, list certificates by status or expiration, revoke certificates
+- **Flexible Issuance Profiles**: Define reusable certificate templates with key usage, validity, and crypto enforcement
+- **Advanced Filtering**: Query resources with pagination, sorting, and filtering support
+- **Metadata Management**: Attach and update custom metadata on CAs and certificates
+- **Signature Operations**: Sign and verify arbitrary messages using CA private keys
+
+## Common Parameters
+
+Many list endpoints support these query parameters:
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination cursor from previous response
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field to sort results by
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression using `field[operand]value` format
+  
+  Example: `status[eq]=ACTIVE`
+</ParamField>
+
+## Response Format
+
+All error responses follow this format:
+
+```json
+{
+  "err": "Error description"
+}
+```
+
+List responses use pagination:
+
+```json
+{
+  "list": [...],
+  "next": "pagination-bookmark-string"
+}
+```
+
+## Certificate Status Values
+
+Certificates can have the following statuses:
+
+- `ACTIVE` - Certificate is valid and active
+- `EXPIRED` - Certificate has expired
+- `REVOKED` - Certificate has been revoked
+- `INACTIVE` - Certificate is inactive
+
+## Certificate Types
+
+- `MANAGED` - Certificate managed by Lamassu
+- `IMPORTED_WITH_KEY` - Imported certificate with private key
+- `IMPORTED_WITHOUT_KEY` - Imported certificate without private key

@@ -1,0 +1,468 @@
+---
+title: Advanced Filtering and Sorting
+description: Use JSONPath expressions and operators to query and sort resources in Lamassu
+---
+
+Lamassu provides powerful server-side filtering and sorting on all list endpoints, including support for JSONPath expressions to query nested JSON fields like metadata.
+
+## Query Syntax
+
+Filters are specified using query parameters in the format:
+
+```
+?filter=<field>[<operator>]<value>
+```
+
+Multiple filters can be combined (AND logic) by repeating the `filter` parameter:
+
+```
+?filter=status[eq]=ACTIVE&filter=tags[ct]=production
+```
+
+<Note>
+  Remember to URL-encode values containing spaces, quotes, or special characters.
+</Note>
+
+## Filter Operators
+
+### String Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `eq` | Equal (case-sensitive) | `status[eq]=ACTIVE` |
+| `eq_ic` | Equal (case-insensitive) | `name[eq_ic]=alice` |
+| `ne` | Not equal | `status[ne]=REVOKED` |
+| `ne_ic` | Not equal (case-insensitive) | `name[ne_ic]=alice` |
+| `ct` | Contains | `description[ct]=backup` |
+| `ct_ic` | Contains (case-insensitive) | `description[ct_ic]=backup` |
+| `nc` | Not contains | `description[nc]=skip` |
+| `nc_ic` | Not contains (case-insensitive) | `description[nc_ic]=skip` |
+
+### Numeric Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `lt` | Less than | `size[lt]=1024` |
+| `le` | Less than or equal | `size[le]=1024` |
+| `gt` | Greater than | `size[gt]=1024` |
+| `ge` | Greater than or equal | `size[ge]=1024` |
+
+### Date Operators
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `bf` | Before (date) | `creation_date[bf]=2026-01-01` |
+| `af` | After (date) | `creation_date[af]=2025-01-01` |
+
+### Array Operators
+
+For string array fields like `tags`:
+
+| Operator | Description | Example |
+|----------|-------------|--------|
+| `ct` | Contains element | `tags[ct]=production` |
+| `ct_ic` | Contains element (case-insensitive) | `tags[ct_ic]=Production` |
+
+## JSONPath Filtering
+
+Use the `jsonpath` operator to filter on nested properties within JSON fields like `metadata`, `settings`, or custom JSON columns.
+
+### Basic JSONPath Syntax
+
+```
+?filter=<field>[jsonpath]<expression>
+```
+
+### String Equality
+
+```bash
+# Find devices in production environment
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]$.environment%20==%20%22production%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+URL-decoded:
+```
+metadata[jsonpath]$.environment == "production"
+```
+
+### Numeric Comparison
+
+```bash
+# Find devices with priority > 5
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]$.priority%20%3E%205" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+URL-decoded:
+```
+metadata[jsonpath]$.priority > 5
+```
+
+### Existence Check
+
+```bash
+# Find devices with environment field defined
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.environment)" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Nested Property Access
+
+```bash
+# Access nested objects
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]$.location.region%20==%20%22us-west%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+URL-decoded:
+```
+metadata[jsonpath]$.location.region == "us-west"
+```
+
+## Array Filtering with JSONPath
+
+JSONPath supports powerful array operations:
+
+### Array Contains Value
+
+```bash
+# Find devices with "production" in tags array
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.tags[*]%20?%20(@%20==%20%22production%22))" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+URL-decoded:
+```
+metadata[jsonpath]exists($.tags[*] ? (@ == "production"))
+```
+
+### Array Contains Object with Property
+
+```bash
+# Find devices with a tag object where key == "production"
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.tags[*]%20?%20(@.key%20==%20%22production%22))" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+URL-decoded:
+```
+metadata[jsonpath]exists($.tags[*] ? (@.key == "production"))
+```
+
+### Array Index Access
+
+```bash
+# First element equals "staging"
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]$.tags[0]%20==%20%22staging%22" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Last element equals "backend"
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]$.tags[last]%20==%20%22backend%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Multiple Array Conditions (AND)
+
+```bash
+# Tags contains both "production" AND "api"
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.tags[*]%20?%20(@%20==%20%22production%22))%20%26%26%20exists($.tags[*]%20?%20(@%20==%20%22api%22))" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+URL-decoded:
+```
+metadata[jsonpath]exists($.tags[*] ? (@ == "production")) && exists($.tags[*] ? (@ == "api"))
+```
+
+### Numeric Array Filtering
+
+```bash
+# Find devices with any port > 8000
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.ports[*]%20?%20(@%20%3E%208000))" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Combining Multiple Filters
+
+Multiple filters are combined with AND logic:
+
+```bash
+# Active devices in production environment in us-west region
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=status[eq]=ACTIVE&filter=metadata[jsonpath]$.environment%20==%20%22production%22&filter=metadata[jsonpath]$.region%20==%20%22us-west%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Sorting
+
+### Basic Sorting
+
+Sort results using `sort_by` and `sort_mode` query parameters:
+
+```bash
+# Sort devices by creation date (ascending)
+curl "https://lamassu.example.com/api/devmanager/v1/devices?sort_by=creation_timestamp&sort_mode=asc" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Sort CAs by status (descending)
+curl "https://lamassu.example.com/api/ca/v1/cas?sort_by=status&sort_mode=desc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### JSONPath Sorting
+
+Sort by nested properties within JSON fields:
+
+```bash
+# Sort devices by metadata.environment (alphabetically)
+curl "https://lamassu.example.com/api/devmanager/v1/devices?sort_by=metadata[jsonpath]$.environment&sort_mode=asc" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Sort devices by metadata.priority (numeric descending)
+curl "https://lamassu.example.com/api/devmanager/v1/devices?sort_by=metadata[jsonpath]$.priority&sort_mode=desc" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Sort by nested property
+curl "https://lamassu.example.com/api/devmanager/v1/devices?sort_by=metadata[jsonpath]$.location.region&sort_mode=asc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Type-Aware Sorting
+
+The system automatically detects data types in JSON fields for correct sorting:
+
+| Type | Behavior | Example |
+|------|----------|--------|
+| **String** | Alphabetical | `dev` → `prod` → `stage` |
+| **Number** | Numeric (not lexicographic) | `5` → `10` → `20` |
+| **Date** | Chronological (ISO 8601) | `2025-01-10` → `2026-01-15` |
+| **NULL/Missing** | ASC: last, DESC: first | Configurable |
+
+### Combine Filtering and Sorting
+
+```bash
+# Filter active devices and sort by priority
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=status[eq]=ACTIVE&sort_by=metadata[jsonpath]$.priority&sort_mode=desc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Filterable Fields by Resource
+
+### Certificate Authorities (CA)
+
+```bash
+# By ID
+?filter=id[eq]=my-root-ca
+
+# By level
+?filter=level[eq]=0
+
+# By type
+?filter=type[eq]=MANAGED
+
+# By status
+?filter=status[eq]=ACTIVE
+
+# By engine
+?filter=engine_id[eq]=aws-kms-prod
+
+# By validity dates
+?filter=valid_to[bf]=2027-01-01T00:00:00Z
+?filter=valid_from[af]=2025-01-01T00:00:00Z
+
+# By subject common name
+?filter=subject.common_name[eq]=My Root CA
+
+# By profile
+?filter=profile_id[eq]=root-ca-profile
+```
+
+### Certificates
+
+```bash
+# By serial number
+?filter=serial_number[eq]=1a2b3c4d5e6f
+
+# By type
+?filter=type[eq]=MANAGED
+
+# By status
+?filter=status[eq]=ACTIVE
+
+# By issuer CA ID
+?filter=issuer_meta.id[eq]=my-root-ca
+
+# By subject
+?filter=subject.common_name[ct]=device
+
+# By metadata (JSONPath)
+?filter=metadata[jsonpath]$.purpose == "signing"
+
+# By validity
+?filter=valid_to[bf]=2026-12-31T23:59:59Z
+```
+
+### Devices
+
+```bash
+# By ID
+?filter=id[eq]=device-001
+
+# By DMS owner
+?filter=dms_owner[eq]=manufacturing-dms
+
+# By status
+?filter=status[eq]=ACTIVE
+
+# By tags
+?filter=tags[ct]=production
+
+# By creation date
+?filter=creation_timestamp[af]=2026-01-01T00:00:00Z
+
+# By metadata (JSONPath)
+?filter=metadata[jsonpath]$.location == "factory-floor-3"
+```
+
+### DMS Instances
+
+```bash
+# By ID
+?filter=id[eq]=manufacturing-dms
+
+# By name
+?filter=name[ct]=production
+
+# By creation date
+?filter=creation_date[af]=2025-01-01
+
+# By metadata (JSONPath)
+?filter=metadata[jsonpath]$.region == "eu-west-1"
+
+# By settings (JSONPath)
+?filter=settings[jsonpath]$.auth_mode == "mTLS"
+```
+
+## Practical Examples
+
+### Find Expiring Certificates
+
+```bash
+# Certificates expiring in next 30 days
+curl "https://lamassu.example.com/api/ca/v1/cas/issuing-ca-01/certificates?filter=valid_to[bf]=2026-04-08T00:00:00Z&filter=status[eq]=ACTIVE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Production Devices in Specific Region
+
+```bash
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=tags[ct]=production&filter=metadata[jsonpath]$.region%20==%20%22us-west-1%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### High-Priority Devices Approaching Expiration
+
+```bash
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=status[eq]=ABOUT_TO_EXPIRE&filter=metadata[jsonpath]$.priority%20%3E%205&sort_by=metadata[jsonpath]$.priority&sort_mode=desc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### CAs in Specific Engine with Metadata
+
+```bash
+curl "https://lamassu.example.com/api/ca/v1/cas?filter=engine_id[eq]=aws-kms-prod&filter=metadata[jsonpath]$.environment%20==%20%22production%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Statistics with Filtering
+
+Statistics endpoints support filtering to get aggregate counts for specific subsets.
+
+<Note>
+  The `status` field **cannot** be used as a filter on statistics endpoints because status distribution is always computed.
+</Note>
+
+### Device Statistics
+
+```bash
+# Stats for devices in a specific DMS
+curl "https://lamassu.example.com/api/devmanager/v1/stats?filter=dms_owner[eq]=manufacturing-dms" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Stats for production devices
+curl "https://lamassu.example.com/api/devmanager/v1/stats?filter=tags[ct]=production" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### CA Statistics
+
+```bash
+# Stats for CAs in specific engine
+curl "https://lamassu.example.com/api/ca/v1/stats?ca_filter=engine_id[eq]=aws-kms-prod" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Stats for recently issued certificates
+curl "https://lamassu.example.com/api/ca/v1/stats?cert_filter=valid_from[af]=2026-01-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Combined CA and certificate filtering
+curl "https://lamassu.example.com/api/ca/v1/stats?ca_filter=metadata[jsonpath]$.environment%20==%20%22production%22&cert_filter=valid_from[af]=2025-12-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Pagination with Filters
+
+Filters and sorting are preserved across paginated requests:
+
+```bash
+# First page
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=status[eq]=ACTIVE&sort_by=creation_timestamp&sort_mode=desc&page_size=50" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Response includes next bookmark
+# Second page (bookmark maintains filters and sort)
+curl "https://lamassu.example.com/api/devmanager/v1/devices?bookmark=<encoded_bookmark>" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always URL-encode filter values">
+    Spaces, quotes, and special characters must be URL-encoded:
+    ```bash
+    # Correct
+    $.environment%20==%20%22production%22
+
+    # Incorrect (will fail)
+    $.environment == "production"
+    ```
+  </Accordion>
+
+  <Accordion title="Use case-insensitive operators for user input">
+    When filtering based on user input, use `eq_ic` or `ct_ic` to avoid case sensitivity issues.
+  </Accordion>
+
+  <Accordion title="Leverage JSONPath for complex queries">
+    JSONPath expressions are evaluated server-side by PostgreSQL, providing efficient querying of nested structures.
+  </Accordion>
+
+  <Accordion title="Combine filters to narrow results">
+    Multiple filters are ANDed together, allowing you to build precise queries without retrieving unnecessary data.
+  </Accordion>
+
+  <Accordion title="Use sorting to optimize pagination">
+    Consistent sorting ensures deterministic pagination results across requests.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Device Lifecycle" icon="microchip" href="/guides/device-lifecycle">
+    Apply filtering to device management workflows
+  </Card>
+  <Card title="Managing CAs" icon="building-columns" href="/guides/managing-cas">
+    Filter and organize your CA hierarchy
+  </Card>
+</CardGroup>

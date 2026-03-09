@@ -1,0 +1,134 @@
+---
+title: 'Engine Architecture'
+description: 'Pluggable engine system for crypto operations, storage, and event handling'
+---
+
+## Overview
+
+Lamassu uses a **pluggable engine architecture** that allows you to configure different backends for:
+
+- **Crypto Engines** - Key generation and signing operations
+- **Storage Engines** - Persistent data storage
+- **Event Bus Engines** - Asynchronous event publishing and subscription
+
+This design enables you to swap implementations without changing application code, supporting deployments from development environments to production-grade HSM configurations.
+
+## Engine Types
+
+<CardGroup cols={3}>
+  <Card title="Crypto Engines" icon="key" href="/engines/crypto-engines">
+    Generate and manage cryptographic keys using software, HSM, or cloud KMS
+  </Card>
+  
+  <Card title="Storage Engines" icon="database" href="/engines/storage-engines">
+    Store CA certificates, device records, and audit logs
+  </Card>
+  
+  <Card title="Event Bus" icon="bolt" href="/engines/event-bus">
+    Publish and consume events across services
+  </Card>
+</CardGroup>
+
+## Architecture Pattern
+
+All engines follow a common registration pattern:
+
+```go
+// Engine registration
+package myengine
+
+func Register() {
+    engineregistry.RegisterEngine("engine-type", func(config) (Engine, error) {
+        return NewEngine(config)
+    })
+}
+```
+
+Engines are configured via YAML and instantiated at runtime based on the configuration:
+
+```yaml
+engines:
+  crypto:
+    - id: primary-hsm
+      type: pkcs11
+      config:
+        module_path: /usr/lib/softhsm/libsofthsm2.so
+        token: lamassu-token
+        pin: "1234"
+  
+  storage:
+    provider: postgres
+    config:
+      hostname: postgres.example.com
+      port: 5432
+      username: lamassu
+      password: ${DB_PASSWORD}
+```
+
+## Security Levels
+
+Crypto engines expose their security level via the `CryptoEngineInfo` interface:
+
+<AccordionGroup>
+  <Accordion title="Security Level 1 (SL1)">
+    Software-based key storage. Keys stored in encrypted form but accessible to the operating system.
+    
+    **Engines:** Software, Vault KV2, Filesystem
+  </Accordion>
+  
+  <Accordion title="Security Level 2 (SL2)">
+    Hardware-backed key storage. Keys protected by HSM or cloud KMS with hardware security modules.
+    
+    **Engines:** PKCS#11, AWS KMS
+  </Accordion>
+</AccordionGroup>
+
+## Supported Key Types
+
+Engines advertise supported key types and sizes:
+
+```go
+type CryptoEngineInfo struct {
+    Type              EngineType
+    SecurityLevel     SecurityLevel
+    Provider          string
+    Name              string
+    Metadata          map[string]any
+    SupportedKeyTypes []SupportedKeyTypeInfo
+}
+
+type SupportedKeyTypeInfo struct {
+    Type  KeyType  // RSA or ECDSA
+    Sizes []int    // e.g., [2048, 3072, 4096] for RSA
+}
+```
+
+## Import Paths
+
+Engines are located in the `engines/` directory:
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/engines/crypto/software/v3"
+    "github.com/lamassuiot/lamassuiot/engines/crypto/aws/v3"
+    "github.com/lamassuiot/lamassuiot/engines/crypto/pkcs11/v3"
+    "github.com/lamassuiot/lamassuiot/engines/crypto/vaultkv2/v3"
+    
+    "github.com/lamassuiot/lamassuiot/engines/storage/postgres/v3"
+    
+    "github.com/lamassuiot/lamassuiot/engines/eventbus/amqp/v3"
+    "github.com/lamassuiot/lamassuiot/engines/eventbus/aws/v3"
+)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configure Crypto Engines" icon="shield" href="/engines/crypto-engines">
+    Set up key storage with software, HSM, or cloud KMS
+  </Card>
+  
+  <Card title="Configure Storage" icon="database" href="/engines/storage-engines">
+    Configure PostgreSQL for production deployments
+  </Card>
+</CardGroup>

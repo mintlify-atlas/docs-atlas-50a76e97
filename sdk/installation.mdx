@@ -1,0 +1,299 @@
+---
+title: Installation & Setup
+description: Install and configure the Lamassu IoT Go SDK
+---
+
+Get started with the Lamassu IoT Go SDK by installing the required packages and configuring your HTTP client.
+
+## Prerequisites
+
+- Go 1.19 or later
+- Access to a Lamassu IoT backend instance
+- Authentication credentials (certificates, API keys, or OAuth2 credentials)
+
+## Installation
+
+Install the SDK using Go modules:
+
+```bash
+go get github.com/lamassuiot/lamassuiot/core/v3
+```
+
+Import the SDK package in your code:
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/config"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+    "github.com/sirupsen/logrus"
+)
+```
+
+## Basic Setup
+
+### 1. Create an HTTP Client
+
+The SDK requires an HTTP client configured with your authentication method:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/config"
+    "github.com/sirupsen/logrus"
+)
+
+func main() {
+    logger := logrus.NewEntry(logrus.New())
+    
+    // Build HTTP client with configuration
+    httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+        Protocol: "https",
+        Hostname: "api.lamassu.example.com",
+        Port:     443,
+        BasePath: "",
+        AuthMode: config.NoAuth,
+        InsecureSkipVerify: false,
+    }, logger)
+    if err != nil {
+        log.Fatalf("Failed to build HTTP client: %v", err)
+    }
+    
+    // Client is ready to use
+}
+```
+
+### 2. Initialize Service Clients
+
+Create clients for the services you need:
+
+```go
+// CA Client
+caURL := sdk.BuildURL(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "ca.lamassu.example.com",
+    Port:     443,
+})
+caClient := sdk.NewHttpCAClient(httpClient, caURL)
+
+// Device Manager Client
+deviceURL := sdk.BuildURL(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "device.lamassu.example.com",
+    Port:     443,
+})
+deviceClient := sdk.NewHttpDeviceManagerClient(httpClient, deviceURL)
+
+// DMS Manager Client
+dmsURL := sdk.BuildURL(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "dms.lamassu.example.com",
+    Port:     443,
+})
+dmsClient := sdk.NewHttpDMSManagerClient(httpClient, dmsURL)
+
+// KMS Client
+kmsURL := sdk.BuildURL(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "kms.lamassu.example.com",
+    Port:     443,
+})
+kmsClient := sdk.NewHttpKMSClient(httpClient, kmsURL)
+```
+
+## Authentication Methods
+
+### Mutual TLS (mTLS)
+
+Use client certificates for authentication:
+
+```go
+httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "api.lamassu.example.com",
+    Port:     443,
+    AuthMode: config.MTLS,
+    AuthMTLSOptions: config.HTTPMTLSConfig{
+        CertFile: "/path/to/client-cert.pem",
+        KeyFile:  "/path/to/client-key.pem",
+    },
+    CACertificateFile:  "/path/to/ca-cert.pem",
+    InsecureSkipVerify: false,
+}, logger)
+```
+
+### JWT/OAuth2 Authentication
+
+Use OAuth2 client credentials flow:
+
+```go
+httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "api.lamassu.example.com",
+    Port:     443,
+    AuthMode: config.JWT,
+    AuthJWTOptions: config.HTTPJWTConfig{
+        OIDCWellKnownURL: "https://auth.example.com/.well-known/openid-configuration",
+        ClientID:         "my-client-id",
+        ClientSecret:     "my-client-secret",
+    },
+    InsecureSkipVerify: false,
+}, logger)
+```
+
+### API Key Authentication
+
+Use API key in custom header:
+
+```go
+httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "api.lamassu.example.com",
+    Port:     443,
+    AuthMode: config.ApiKey,
+    AuthApiKeyOptions: config.HTTPApiKeyConfig{
+        Header: "X-API-Key",
+        Key:    "your-api-key-here",
+    },
+    InsecureSkipVerify: false,
+}, logger)
+```
+
+### Using PEM Strings Instead of Files
+
+For mTLS, you can provide PEM-encoded certificates and keys as strings:
+
+```go
+certPEM := `-----BEGIN CERTIFICATE-----
+MIIC...
+-----END CERTIFICATE-----`
+
+keyPEM := `-----BEGIN PRIVATE KEY-----
+MIIE...
+-----END PRIVATE KEY-----`
+
+httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "api.lamassu.example.com",
+    Port:     443,
+    AuthMode: config.MTLS,
+    AuthMTLSOptions: config.HTTPMTLSConfig{
+        CertFile: certPEM,  // String containing PEM data
+        KeyFile:  keyPEM,   // String containing PEM data
+    },
+}, logger)
+```
+
+## Adding Custom Headers
+
+Inject custom headers into all requests:
+
+```go
+// Add source identifier
+client := sdk.HttpClientWithSourceHeaderInjector(httpClient, "my-application-v1.0")
+
+// Add any custom header
+client := sdk.HttpClientWithCustomHeaders(httpClient, "X-Tenant-ID", "tenant-123")
+```
+
+## TLS Configuration
+
+### Custom CA Certificate
+
+Trust a custom CA certificate:
+
+```go
+httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+    Protocol:           "https",
+    Hostname:           "api.lamassu.example.com",
+    Port:               443,
+    CACertificateFile:  "/path/to/custom-ca.pem",
+    InsecureSkipVerify: false,
+}, logger)
+```
+
+### Skip TLS Verification (Development Only)
+
+<Warning>
+  Only use `InsecureSkipVerify: true` in development environments. Never use this in production.
+</Warning>
+
+```go
+httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+    Protocol:           "https",
+    Hostname:           "localhost",
+    Port:               8443,
+    InsecureSkipVerify: true,  // WARNING: Development only!
+}, logger)
+```
+
+## Complete Example
+
+Here's a complete example that initializes all clients:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/config"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+    "github.com/sirupsen/logrus"
+)
+
+func main() {
+    logger := logrus.NewEntry(logrus.New())
+    
+    // Build HTTP client with mTLS
+    httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+        Protocol: "https",
+        Hostname: "api.lamassu.example.com",
+        Port:     443,
+        AuthMode: config.MTLS,
+        AuthMTLSOptions: config.HTTPMTLSConfig{
+            CertFile: "/etc/lamassu/client-cert.pem",
+            KeyFile:  "/etc/lamassu/client-key.pem",
+        },
+        CACertificateFile: "/etc/lamassu/ca-cert.pem",
+    }, logger)
+    if err != nil {
+        log.Fatalf("Failed to build HTTP client: %v", err)
+    }
+    
+    // Add source header
+    httpClient = sdk.HttpClientWithSourceHeaderInjector(httpClient, "my-app-v1.0")
+    
+    // Initialize CA client
+    caClient := sdk.NewHttpCAClient(
+        httpClient,
+        "https://ca.lamassu.example.com:443",
+    )
+    
+    // Use the client
+    ctx := context.Background()
+    cas, err := caClient.GetCAByID(ctx, services.GetCAByIDInput{
+        CAID: "root-ca",
+    })
+    if err != nil {
+        log.Fatalf("Failed to get CA: %v", err)
+    }
+    
+    log.Printf("CA: %s", cas.Subject.CommonName)
+}
+```
+
+## Next Steps
+
+- [CA Client Usage](/sdk/ca-client) - Work with Certificate Authorities
+- [Device Manager Client](/sdk/device-manager-client) - Manage devices
+- [DMS Manager Client](/sdk/dms-manager-client) - DMS operations
+- [KMS Client](/sdk/kms-client) - Key management

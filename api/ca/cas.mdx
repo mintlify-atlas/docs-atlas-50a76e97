@@ -1,0 +1,541 @@
+---
+title: 'Certificate Authorities'
+description: 'CA lifecycle operations - create, list, import, update, and delete certificate authorities'
+icon: 'building-columns'
+---
+
+## List Certificate Authorities
+
+<api method="GET" endpoint="/api/ca/v1/cas" />
+
+Retrieve a paginated list of all certificate authorities.
+
+### Query Parameters
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination cursor from previous response
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field to sort results by
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression (e.g., `status[eq]=ACTIVE`)
+</ParamField>
+
+### Response
+
+<ResponseField name="list" type="array">
+  Array of CA certificate objects
+  
+  <ResponseField name="id" type="string">
+    CA identifier
+  </ResponseField>
+  
+  <ResponseField name="serial_number" type="string">
+    Certificate serial number
+  </ResponseField>
+  
+  <ResponseField name="certificate" type="object">
+    Certificate details including subject, issuer, validity, and status
+  </ResponseField>
+  
+  <ResponseField name="level" type="integer">
+    CA hierarchy level (0 for root CA)
+  </ResponseField>
+  
+  <ResponseField name="profile_id" type="string">
+    Associated issuance profile ID
+  </ResponseField>
+  
+  <ResponseField name="metadata" type="object">
+    Custom metadata key-value pairs
+  </ResponseField>
+  
+  <ResponseField name="creation_ts" type="string">
+    Creation timestamp (ISO 8601)
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="next" type="string">
+  Pagination bookmark for next page
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/cas?page_size=10&sort_mode=desc" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Example Response
+
+```json
+{
+  "list": [
+    {
+      "id": "root-ca-1",
+      "serial_number": "1a2b3c4d5e6f7890",
+      "certificate": {
+        "subject": {
+          "common_name": "Root CA",
+          "organization": "Lamassu IoT",
+          "country": "US"
+        },
+        "status": "ACTIVE",
+        "valid_from": "2024-01-01T00:00:00Z",
+        "valid_to": "2034-01-01T00:00:00Z"
+      },
+      "level": 0,
+      "profile_id": "default-ca-profile",
+      "metadata": {
+        "purpose": "production"
+      },
+      "creation_ts": "2024-01-01T00:00:00Z"
+    }
+  ],
+  "next": "eyJsYXN0X2lkIjoicm9vdC1jYS0xIn0="
+}
+```
+
+---
+
+## Create Certificate Authority
+
+<api method="POST" endpoint="/api/ca/v1/cas" />
+
+Create a new certificate authority.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Unique CA identifier
+</ParamField>
+
+<ParamField body="subject" type="object" required>
+  Certificate subject information
+  
+  <ParamField body="common_name" type="string" required>
+    Common name (CN)
+  </ParamField>
+  
+  <ParamField body="organization" type="string">
+    Organization (O)
+  </ParamField>
+  
+  <ParamField body="organization_unit" type="string">
+    Organizational unit (OU)
+  </ParamField>
+  
+  <ParamField body="country" type="string">
+    Country (C)
+  </ParamField>
+  
+  <ParamField body="state" type="string">
+    State or province (ST)
+  </ParamField>
+  
+  <ParamField body="locality" type="string">
+    Locality or city (L)
+  </ParamField>
+</ParamField>
+
+<ParamField body="key_metadata" type="object" required>
+  Key generation parameters
+  
+  <ParamField body="type" type="string" required>
+    Key type (e.g., `RSA`, `ECDSA`)
+  </ParamField>
+  
+  <ParamField body="bits" type="integer" required>
+    Key size in bits (e.g., 2048, 4096 for RSA; 256, 384 for ECDSA)
+  </ParamField>
+</ParamField>
+
+<ParamField body="ca_expiration" type="object" required>
+  CA certificate validity period
+  
+  <ParamField body="type" type="string" required>
+    Validity type: `Duration` or `Time`
+  </ParamField>
+  
+  <ParamField body="duration" type="string">
+    Human-readable duration (e.g., `10y`, `365d`) - required if type is `Duration`
+  </ParamField>
+  
+  <ParamField body="time" type="string">
+    Expiration timestamp (ISO 8601) - required if type is `Time`
+  </ParamField>
+</ParamField>
+
+<ParamField body="parent_id" type="string">
+  Parent CA identifier (omit for root CA)
+</ParamField>
+
+<ParamField body="profile_id" type="string">
+  Issuance profile ID for certificates issued by this CA
+</ParamField>
+
+<ParamField body="engine_id" type="string">
+  Crypto engine identifier
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Custom metadata key-value pairs
+</ParamField>
+
+<ParamField body="ca_issuance_profile_id" type="string">
+  CA issuance profile ID (for creating subordinate CAs)
+</ParamField>
+
+### Response
+
+Returns the created CA certificate object (see List CAs response for structure).
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "root-ca-prod",
+    "subject": {
+      "common_name": "Production Root CA",
+      "organization": "Lamassu IoT",
+      "country": "US"
+    },
+    "key_metadata": {
+      "type": "RSA",
+      "bits": 4096
+    },
+    "ca_expiration": {
+      "type": "Duration",
+      "duration": "10y"
+    },
+    "engine_id": "default-engine",
+    "metadata": {
+      "environment": "production"
+    }
+  }'
+```
+
+---
+
+## Import Certificate Authority
+
+<api method="POST" endpoint="/api/ca/v1/cas/import" />
+
+Import an existing certificate authority.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  CA identifier
+</ParamField>
+
+<ParamField body="engine_id" type="string" required>
+  Crypto engine identifier
+</ParamField>
+
+<ParamField body="ca" type="object" required>
+  X509 certificate (parsed representation)
+</ParamField>
+
+<ParamField body="private_key" type="string">
+  Base64-encoded PEM private key
+</ParamField>
+
+<ParamField body="ca_chain" type="array">
+  Array of X509 certificate objects forming the chain
+</ParamField>
+
+<ParamField body="ca_type" type="string" required>
+  Certificate type: `MANAGED`, `IMPORTED_WITH_KEY`, or `IMPORTED_WITHOUT_KEY`
+</ParamField>
+
+<ParamField body="parent_id" type="string">
+  Parent CA identifier
+</ParamField>
+
+<ParamField body="profile_id" type="string">
+  Issuance profile ID
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas/import" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "imported-ca-1",
+    "engine_id": "default-engine",
+    "ca_type": "IMPORTED_WITH_KEY",
+    "private_key": "LS0tLS1CRUdJTi...",
+    "ca": {
+      "subject": {
+        "common_name": "Imported CA"
+      }
+    },
+    "profile_id": "default-profile"
+  }'
+```
+
+---
+
+## Get CA by ID
+
+<api method="GET" endpoint="/api/ca/v1/cas/{id}" />
+
+Retrieve a specific certificate authority by its identifier.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/cas/root-ca-prod" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Get CAs by Common Name
+
+<api method="GET" endpoint="/api/ca/v1/cas/cn/{cn}" />
+
+Retrieve certificate authorities matching a specific common name.
+
+### Path Parameters
+
+<ParamField path="cn" type="string" required>
+  Common name to search for
+</ParamField>
+
+### Query Parameters
+
+Supports standard pagination and filtering parameters (see List CAs).
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/cas/cn/Production%20Root%20CA" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Update CA Metadata
+
+<api method="PUT" endpoint="/api/ca/v1/cas/{id}/metadata" />
+
+Replace CA metadata entirely.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="patches" type="array" required>
+  Array of JSON patch operations
+  
+  <ParamField body="op" type="string" required>
+    Operation: `add`, `remove`, `replace`, `move`, `copy`, or `test`
+  </ParamField>
+  
+  <ParamField body="path" type="string" required>
+    JSON pointer path to the target field
+  </ParamField>
+  
+  <ParamField body="value" type="any">
+    Value for the operation
+  </ParamField>
+  
+  <ParamField body="from" type="string">
+    Source path for move/copy operations
+  </ParamField>
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://your-domain.com/api/ca/v1/cas/root-ca-prod/metadata" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/environment",
+        "value": "staging"
+      },
+      {
+        "op": "add",
+        "path": "/owner",
+        "value": "security-team"
+      }
+    ]
+  }'
+```
+
+---
+
+## Patch CA Metadata
+
+<api method="PATCH" endpoint="/api/ca/v1/cas/{id}/metadata" />
+
+Partially update CA metadata.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+Same as Update CA Metadata (JSON patch operations).
+
+---
+
+## Update CA Status
+
+<api method="POST" endpoint="/api/ca/v1/cas/{id}/status" />
+
+Update the status of a certificate authority.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="status" type="string" required>
+  New status: `ACTIVE`, `EXPIRED`, `REVOKED`, or `INACTIVE`
+</ParamField>
+
+<ParamField body="revocation_reason" type="string">
+  Reason for revocation (required when status is `REVOKED`)
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas/root-ca-prod/status" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "REVOKED",
+    "revocation_reason": "Key compromise"
+  }'
+```
+
+---
+
+## Update CA Issuance Profile
+
+<api method="POST" endpoint="/api/ca/v1/cas/{id}/profile" />
+
+Update the issuance profile used by a CA for issuing certificates.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="profile_id" type="string" required>
+  New issuance profile identifier
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas/root-ca-prod/profile" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile_id": "new-profile-v2"
+  }'
+```
+
+---
+
+## Reissue CA Certificate
+
+<api method="POST" endpoint="/api/ca/v1/cas/{id}/reissue" />
+
+Reissue an existing CA certificate with a new validity period. The CA must be in a valid state (not expired or revoked).
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="profile_id" type="string">
+  ID of existing issuance profile to use (alternative to inline profile)
+</ParamField>
+
+<ParamField body="profile" type="object">
+  Complete issuance profile specification (alternative to profile_id)
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas/root-ca-prod/reissue" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "profile_id": "extended-validity-profile"
+  }'
+```
+
+---
+
+## Delete CA
+
+<api method="DELETE" endpoint="/api/ca/v1/cas/{id}" />
+
+Delete a certificate authority.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Response
+
+Returns `204 No Content` on successful deletion.
+
+### Example Request
+
+```bash
+curl -X DELETE "https://your-domain.com/api/ca/v1/cas/old-ca-1" \
+  -H "Authorization: Bearer <token>"
+```

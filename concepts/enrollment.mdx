@@ -1,0 +1,698 @@
+---
+title: Device Enrollment
+description: EST protocol, device onboarding, and certificate provisioning in Lamassu IoT
+---
+
+# Device Enrollment
+
+Device enrollment is the process of provisioning cryptographic identities to IoT devices. Lamassu implements the EST (Enrollment over Secure Transport) protocol defined in RFC 7030 for automated, secure device certificate enrollment.
+
+## EST Protocol Overview
+
+EST (RFC 7030) is a protocol for certificate management over HTTPS:
+
+- **Transport**: HTTPS (TLS 1.2+)
+- **Format**: PKCS#10 (CSR), PKCS#7 (certificates)
+- **Encoding**: Base64-encoded DER
+- **Authentication**: mTLS, JWT, PSK, or no auth
+
+### Why EST?
+
+- **Industry standard**: RFC 7030 is widely adopted for IoT device enrollment
+- **Secure transport**: Built on TLS with mutual authentication
+- **Simple workflow**: Minimal endpoints for enrollment and re-enrollment
+- **Client support**: Libraries available for embedded systems
+- **Scalable**: Supports automated enrollment for large device fleets
+
+<Info>
+  Lamassu's EST implementation follows RFC 7030 with extensions for IoT-specific requirements.
+</Info>
+
+## EST Endpoints
+
+Lamassu implements the core EST endpoints:
+
+### GET /cacerts
+
+**Purpose**: Retrieve CA certificates (trust anchors)
+
+**URL**: `/.well-known/est/{dmsId}/cacerts`
+
+**Authentication**: None required
+
+**Response**: Base64-encoded PKCS#7 containing CA certificates
+
+**Use case**: Bootstrap trust before enrollment
+
+```bash
+# Fetch CA certificates
+curl -s -k "https://est.example.com/.well-known/est/dms-01/cacerts" \
+  -o cacerts.b64
+
+# Decode and extract
+base64 -d cacerts.b64 | openssl pkcs7 -inform DER -print_certs \
+  -out cacerts.pem
+```
+
+### POST /simpleenroll
+
+**Purpose**: Enroll a new device certificate
+
+**URL**: `/.well-known/est/{dmsId}/simpleenroll`
+
+**Authentication**: Depends on DMS configuration (mTLS, webhook, or none)
+
+**Request**: Base64-encoded DER CSR
+
+**Response**: Base64-encoded PKCS#7 containing signed certificate
+
+**Use case**: Initial device provisioning
+
+```bash
+# Generate key and CSR
+openssl genpkey -algorithm RSA -out device.key -pkeyopt rsa_keygen_bits:2048
+openssl req -new -key device.key -out device.csr \
+  -subj "/CN=device-001/O=Acme"
+
+# Convert to Base64 DER
+openssl req -in device.csr -outform DER | base64 -w 0 > device.b64
+
+# Enroll with mTLS auth
+curl -v -s -k \
+  --cert bootstrap.crt --key bootstrap.key \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary "@device.b64" \
+  "https://est.example.com/.well-known/est/dms-01/simpleenroll" \
+  -o enroll.b64
+
+# Extract certificate
+base64 -d enroll.b64 | openssl pkcs7 -inform DER -print_certs \
+  -out device.pem
+```
+
+### POST /simplereenroll
+
+**Purpose**: Renew an existing device certificate
+
+**URL**: `/.well-known/est/{dmsId}/simplereenroll`
+
+**Authentication**: Current device certificate (mTLS)
+
+**Request**: Base64-encoded DER CSR
+
+**Response**: Base64-encoded PKCS#7 containing new certificate
+
+**Use case**: Certificate renewal before expiration
+
+```bash
+# Generate new CSR with same or different key
+openssl req -new -key device.key -out renew.csr \
+  -subj "/CN=device-001/O=Acme"
+
+# Convert to Base64 DER
+openssl req -in renew.csr -outform DER | base64 -w 0 > renew.b64
+
+# Re-enroll using current certificate
+curl -v -s -k \
+  --cert device.pem --key device.key \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary "@renew.b64" \
+  "https://est.example.com/.well-known/est/dms-01/simplereenroll" \
+  -o reenroll.b64
+
+# Extract new certificate
+base64 -d reenroll.b64 | openssl pkcs7 -inform DER -print_certs \
+  -out device-new.pem
+```
+
+### POST /serverkeygen
+
+**Purpose**: Request server-generated key and certificate
+
+**URL**: `/.well-known/est/{dmsId}/serverkeygen`
+
+**Authentication**: Depends on DMS configuration
+
+**Request**: Base64-encoded DER CSR (without private key)
+
+**Response**: `multipart/mixed` containing:
+1. Private key (PKCS#8, Base64-encoded)
+2. Certificate (PKCS#7, Base64-encoded)
+
+**Use case**: Devices that cannot generate keys locally
+
+<Warning>
+  Server-side key generation transmits private keys over the network (albeit encrypted via TLS). Use only when device-side key generation is not possible.
+</Warning>
+
+```bash
+# Request server-generated key
+curl -v -s -k \
+  --cert bootstrap.crt --key bootstrap.key \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary "@device.b64" \
+  "https://est.example.com/.well-known/est/dms-01/serverkeygen" \
+  -o response.mime
+
+# Response contains multipart with boundary "estServerLamassuBoundary"
+# Part 1: Private key (application/pkcs8)
+# Part 2: Certificate (application/pkcs7-mime)
+```
+
+### GET /csrattrs
+
+**Purpose**: Retrieve recommended CSR attributes
+
+**URL**: `/.well-known/est/{dmsId}/csrattrs`
+
+**Authentication**: None required
+
+**Response**: ASN.1 encoded CSR attributes
+
+**Use case**: Discover required CSR fields before enrollment
+
+## DMS (Device Management Service)
+
+The DMS controls enrollment policies and settings:
+
+```go
+type DMS struct {
+    ID           string      // DMS identifier
+    Name         string      // Display name
+    Metadata     map[string]any
+    CreationDate time.Time
+    Settings     DMSSettings // Enrollment configuration
+}
+```
+
+### DMS Settings
+
+```go
+type DMSSettings struct {
+    ServerKeyGen           ServerKeyGenSettings
+    EnrollmentSettings     EnrollmentSettings
+    ReEnrollmentSettings   ReEnrollmentSettings
+    CADistributionSettings CADistributionSettings
+    IssuanceProfileID      string // Certificate issuance profile
+}
+```
+
+<Info>
+  Each DMS has a unique ID used in EST URLs: `/.well-known/est/{dmsId}/...`
+</Info>
+
+## Authentication Modes
+
+Lamassu supports multiple EST authentication modes:
+
+### mTLS (Mutual TLS)
+
+**Mode**: `CLIENT_CERTIFICATE`
+
+**How it works**:
+1. Device presents client certificate during TLS handshake
+2. Server validates certificate against configured CAs
+3. If valid, enrollment proceeds
+
+**Configuration**:
+```go
+type AuthOptionsClientCertificate struct {
+    ValidationCAs        []string // Trusted CA IDs
+    ChainLevelValidation int      // Depth of chain to validate
+    AllowExpired         bool     // Allow expired bootstrap certs
+}
+```
+
+**Use cases**:
+- Production enrollment with bootstrap certificates
+- Re-enrollment (device authenticates with current cert)
+- High-security environments
+
+<Tip>
+  Use separate bootstrap CAs for initial enrollment and separate issuing CAs for production certificates. Revoke bootstrap certificates after successful enrollment.
+</Tip>
+
+### Webhook
+
+**Mode**: `EXTERNAL_WEBHOOK`
+
+**How it works**:
+1. Lamassu receives enrollment request
+2. Calls external webhook with device info and CSR
+3. Webhook returns allow/deny decision
+4. Enrollment proceeds or fails based on webhook response
+
+**Configuration**:
+```go
+type WebhookCall struct {
+    URL     string            // Webhook endpoint
+    Method  string            // HTTP method (POST)
+    Headers map[string]string // Custom headers
+    Timeout time.Duration     // Request timeout
+}
+```
+
+**Use cases**:
+- Custom authorization logic
+- Integration with external systems
+- Dynamic enrollment policies
+- SCEP migration
+
+### No Authentication
+
+**Mode**: `NO_AUTH`
+
+**How it works**: Enrollment proceeds without authentication
+
+**Use cases**:
+- Development and testing
+- Closed networks where physical access control is sufficient
+- Pre-registered devices in JITP mode
+
+<Warning>
+  No-auth mode should never be used in production environments accessible from public networks.
+</Warning>
+
+## Registration Modes
+
+Lamassu supports two device registration modes:
+
+### JITP (Just-In-Time Provisioning)
+
+**Mode**: `JITP`
+
+**How it works**:
+1. Device enrolls without pre-registration
+2. Lamassu automatically creates device record on first enrollment
+3. Device is provisioned with identity certificate
+
+**Configuration**:
+```go
+type EnrollmentSettings struct {
+    RegistrationMode            RegistrationMode       // JITP
+    EnableReplaceableEnrollment bool                   // Allow re-enrollment
+    DeviceProvisionProfile      DeviceProvisionProfile // Device defaults
+    // ...
+}
+
+type DeviceProvisionProfile struct {
+    Icon      string         // Default device icon
+    IconColor string         // Default icon color
+    Metadata  map[string]any // Default metadata
+    Tags      []string       // Default tags
+}
+```
+
+**Benefits**:
+- Zero-touch provisioning
+- Simplified deployment
+- Automatic inventory management
+
+**Risks**:
+- Any device can enroll (mitigate with authentication)
+- Less control over device population
+
+<Note>
+  Use JITP with strong authentication (mTLS or webhook) to prevent unauthorized device enrollment.
+</Note>
+
+### Pre-Registration
+
+**Mode**: `PRE_REGISTRATION`
+
+**How it works**:
+1. Administrator pre-registers devices via API
+2. Device ID is recorded in Lamassu
+3. Device can enroll only if ID matches pre-registered entry
+
+**Benefits**:
+- Strict control over enrolled devices
+- Prevent unauthorized devices
+- Known inventory before deployment
+
+**Workflow**:
+1. Import device IDs from manufacturing system
+2. Pre-register devices via API
+3. Provision bootstrap certificates (optional)
+4. Devices enroll on first connection
+
+<Tip>
+  Pre-registration is recommended for high-security deployments and scenarios with known device inventories.
+</Tip>
+
+## Enrollment Settings
+
+```go
+type EnrollmentSettings struct {
+    EnrollmentProtocol          EnrollmentProto             // EST_RFC7030
+    EnrollmentOptionsESTRFC7030 EnrollmentOptionsESTRFC7030 // EST config
+    DeviceProvisionProfile      DeviceProvisionProfile      // Device defaults
+    EnrollmentCA                string                      // Issuing CA ID
+    EnableReplaceableEnrollment bool                        // Allow replace
+    RegistrationMode            RegistrationMode            // JITP/PRE_REG
+    VerifyCSRSignature          bool                        // CSR validation
+}
+```
+
+### Key Settings
+
+#### EnrollmentCA
+CA that issues device certificates during enrollment.
+
+**Example**: `ca-issuing-devices-01`
+
+#### VerifyCSRSignature
+If `true`, Lamassu verifies the CSR signature matches the public key.
+
+**Purpose**: Prevent MITM attacks on CSR
+
+#### EnableReplaceableEnrollment
+If `true`, already-enrolled devices can re-enroll with a new key pair.
+
+**Use cases**:
+- Key compromise recovery
+- Device re-provisioning
+- Certificate replacement
+
+<Warning>
+  Enabling replaceable enrollment allows devices to change their keys. Ensure proper authentication to prevent unauthorized key replacement.
+</Warning>
+
+## Re-Enrollment Settings
+
+```go
+type ReEnrollmentSettings struct {
+    AdditionalValidationCAs     []string     // Extra trusted CAs
+    RevokeOnReEnrollment        bool         // Revoke old cert
+    ReEnrollmentDelta           TimeDuration // Renewal window
+    EnableExpiredRenewal        bool         // Allow expired certs
+    PreventiveReEnrollmentDelta TimeDuration // Warning window
+    CriticalReEnrollmentDelta   TimeDuration // Critical window
+}
+```
+
+### Renewal Windows
+
+```mermaid
+graph LR
+    A[Issuance] --> B[Normal Operation]
+    B --> C[Preventive Window]
+    C --> D[Critical Window]
+    D --> E[Expiration]
+    E --> F[Expired]
+```
+
+#### PreventiveReEnrollmentDelta
+Time before expiration when device status changes to `RENEWAL_PENDING`.
+
+**Example**: `90d` (90 days before expiration)
+
+**Purpose**: Early warning for certificate renewal
+
+#### CriticalReEnrollmentDelta
+Time before expiration when device status changes to `EXPIRING_SOON`.
+
+**Example**: `30d` (30 days before expiration)
+
+**Purpose**: Critical alert for imminent expiration
+
+<Tip>
+  Set preventive delta to 60-90 days and critical delta to 7-30 days to ensure devices have ample time to renew certificates.
+</Tip>
+
+### RevokeOnReEnrollment
+
+If `true`, the old certificate is revoked when a new one is issued.
+
+**Benefits**:
+- Cleaner certificate lifecycle
+- Prevents old certificates from being used
+- Compliance with some security policies
+
+**Considerations**:
+- Requires careful timing to avoid service disruption
+- Device must activate new certificate before old one is revoked
+
+### EnableExpiredRenewal
+
+If `true`, devices with expired certificates can re-enroll.
+
+**Use case**: Device was offline during renewal window
+
+**Security consideration**: Requires authentication via bootstrap cert or webhook
+
+## CA Distribution Settings
+
+```go
+type CADistributionSettings struct {
+    IncludeLamassuSystemCA bool     // Include root CA
+    IncludeEnrollmentCA    bool     // Include issuing CA
+    ManagedCAs             []string // Additional CA IDs
+}
+```
+
+Controls which CA certificates are returned by `/cacerts`:
+
+- **IncludeLamassuSystemCA**: Include Lamassu root CA
+- **IncludeEnrollmentCA**: Include the CA that issues device certificates
+- **ManagedCAs**: List of additional CA IDs to distribute
+
+**Example**:
+```json
+{
+  "include_system_ca": true,
+  "include_enrollment_ca": true,
+  "managed_cas": [
+    "ca-root-01",
+    "ca-intermediate-01"
+  ]
+}
+```
+
+<Info>
+  Distribute the full CA chain (root + intermediates) to ensure devices can build complete trust chains.
+</Info>
+
+## Server-Side Key Generation
+
+```go
+type ServerKeyGenSettings struct {
+    Enabled bool            // Enable server keygen
+    Key     ServerKeyGenKey // Key parameters
+}
+
+type ServerKeyGenKey struct {
+    Type KeyType // RSA, ECDSA
+    Bits int     // Key size
+}
+```
+
+**Example configuration**:
+```json
+{
+  "enabled": true,
+  "key": {
+    "type": "RSA",
+    "bits": 2048
+  }
+}
+```
+
+**Use cases**:
+- Resource-constrained devices
+- Devices without RNG
+- Centralized key escrow
+
+**Security considerations**:
+- Private key is transmitted over TLS (encrypted but still transmitted)
+- Server has access to device private key
+- Higher risk of key compromise
+
+<Warning>
+  Use server-side key generation only when absolutely necessary. Device-generated keys are more secure.
+</Warning>
+
+## Enrollment Workflow
+
+Typical EST enrollment workflow:
+
+```mermaid
+sequence
+    participant D as Device
+    participant E as EST Server
+    participant C as CA
+    participant K as KMS
+    
+    D->>E: GET /cacerts
+    E->>D: CA certificates (PKCS#7)
+    Note over D: Verify server TLS cert
+    Note over D: Generate key pair
+    Note over D: Create CSR
+    D->>E: POST /simpleenroll (CSR)
+    Note over E: Authenticate (mTLS/webhook)
+    E->>E: Validate CSR
+    E->>C: Sign certificate
+    C->>K: Sign with CA key
+    K->>C: Signature
+    C->>E: Signed certificate
+    E->>D: Certificate (PKCS#7)
+    Note over D: Install certificate
+    Note over D: Update device status
+```
+
+### Step-by-Step
+
+1. **Fetch CA certificates** (`/cacerts`)
+   - Device retrieves trust anchors
+   - Validates EST server TLS certificate
+
+2. **Generate key pair**
+   - Device generates RSA or ECDSA key pair
+   - Private key never leaves device
+
+3. **Create CSR**
+   - Device creates PKCS#10 CSR with public key
+   - Signs CSR with private key
+   - Includes subject DN and extensions
+
+4. **Authenticate**
+   - mTLS: Present bootstrap certificate
+   - Webhook: Server calls external service
+   - No-auth: Skip authentication (not recommended)
+
+5. **Validate CSR**
+   - Verify CSR signature
+   - Check public key algorithm and size
+   - Validate against issuance profile
+
+6. **Sign certificate**
+   - CA signs certificate using KMS
+   - Applies issuance profile policies
+   - Sets validity period, key usage, etc.
+
+7. **Return certificate**
+   - Server returns signed certificate in PKCS#7
+   - Device extracts and installs certificate
+
+8. **Update device status**
+   - Device status changes to `ACTIVE`
+   - Identity slot is populated
+   - Event is recorded
+
+## Related API Endpoints
+
+### EST Endpoints
+
+- `GET /.well-known/est/{dmsId}/cacerts`
+- `POST /.well-known/est/{dmsId}/simpleenroll`
+- `POST /.well-known/est/{dmsId}/simplereenroll`
+- `POST /.well-known/est/{dmsId}/serverkeygen`
+- `GET /.well-known/est/{dmsId}/csrattrs`
+
+### DMS Management
+
+- `GET /v2/dms` — List DMS instances
+- `POST /v2/dms` — Create DMS
+- `GET /v2/dms/{dmsId}` — Get DMS details
+- `PATCH /v2/dms/{dmsId}` — Update DMS settings
+- `DELETE /v2/dms/{dmsId}` — Delete DMS
+
+See [DMS Manager API](/api/dms-manager/overview) for complete API documentation.
+
+## Best Practices
+
+### Security
+
+- **Use mTLS authentication** for production enrollments
+- **Separate bootstrap CAs** from production CAs
+- **Verify CSR signatures** to prevent MITM attacks
+- **Limit enrollment CA validity** to reduce compromise impact
+- **Revoke bootstrap certificates** after successful enrollment
+- **Monitor enrollment events** for anomalies
+
+### Enrollment Policy
+
+- **Pre-register devices** when possible for strict control
+- **Use JITP** with strong authentication for zero-touch provisioning
+- **Configure renewal windows** appropriately (preventive: 90d, critical: 30d)
+- **Enable replaceable enrollment** only if needed
+- **Distribute full CA chain** via `/cacerts`
+
+### Certificate Validity
+
+- **Short device cert validity** (1-2 years) reduces exposure
+- **Automated renewal** using `/simplereenroll`
+- **Preventive renewal** well before expiration
+- **Expired renewal option** for offline devices
+
+### Key Management
+
+- **Device-generated keys** preferred over server-generated
+- **Use appropriate key sizes** (RSA 2048, ECDSA P-256)
+- **Never transmit private keys** unless absolutely necessary
+- **Secure key storage** on device (TPM, secure element)
+
+### Operational
+
+- **Monitor enrollment failures** for issues
+- **Alert on expired certificates** using critical delta
+- **Track enrollment metrics** (success rate, timing)
+- **Test enrollment workflow** regularly
+- **Document recovery procedures** for failed enrollments
+
+## Troubleshooting
+
+### Common Issues
+
+#### 400 Bad Request
+**Cause**: Malformed CSR or incorrect encoding
+
+**Solution**: Ensure CSR is Base64-encoded DER (not PEM)
+
+```bash
+# Correct encoding
+openssl req -in device.csr -outform DER | base64 -w 0 > device.b64
+```
+
+#### 401 Unauthorized
+**Cause**: Authentication failure
+
+**Solutions**:
+- Check client certificate is signed by validation CA
+- Verify client certificate is not expired (unless AllowExpired=true)
+- Ensure webhook is responding correctly
+
+#### 404 Not Found
+**Cause**: Incorrect DMS ID
+
+**Solution**: Verify DMS ID exists and is correct in URL
+
+#### Device Not Created (JITP)
+**Cause**: Pre-registration mode enabled
+
+**Solution**: Pre-register device or switch to JITP mode
+
+#### Certificate Rejected
+**Cause**: CSR doesn't meet issuance profile requirements
+
+**Solutions**:
+- Check key algorithm and size match profile
+- Verify subject DN fields
+- Review crypto enforcement policies
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="EST Enrollment Guide" icon="mobile" href="/guides/est-enrollment">
+    Practical guide to setting up EST enrollment
+  </Card>
+  <Card title="Device Management" icon="microchip" href="/concepts/device-management">
+    Learn about device lifecycle management
+  </Card>
+  <Card title="Certificate Authorities" icon="certificate" href="/concepts/certificate-authorities">
+    Understand CA setup for enrollment
+  </Card>
+  <Card title="DMS Manager API" icon="code" href="/api/dms-manager/overview">
+    Explore the DMS Manager API
+  </Card>
+</CardGroup>

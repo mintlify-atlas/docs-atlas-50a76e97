@@ -1,0 +1,595 @@
+---
+title: Backup & Restore
+description: Backup and restore procedures for Lamassu IoT
+---
+
+Regular backups are critical for protecting your PKI infrastructure and device inventory. This page describes backup strategies, procedures, and disaster recovery for Lamassu IoT deployments.
+
+## Backup Strategy
+
+### What to Back Up
+
+A complete Lamassu backup includes:
+
+<CardGroup cols={2}>
+  <Card title="Database" icon="database">
+    PostgreSQL containing all CAs, certificates, devices, and metadata.
+  </Card>
+  
+  <Card title="Crypto Engine Keys" icon="key">
+    CA private keys stored in Vault, AWS KMS, or PKCS#11 HSM.
+  </Card>
+  
+  <Card title="Configuration" icon="gear">
+    Service configuration files, environment variables, and secrets.
+  </Card>
+  
+  <Card title="TLS Certificates" icon="certificate">
+    Service TLS certificates for HTTPS endpoints.
+  </Card>
+</CardGroup>
+
+<Warning>
+**CA private keys are the most critical assets.** Loss of CA keys means inability to issue or revoke certificates. Secure backup of crypto engines is paramount.
+</Warning>
+
+### Backup Frequency
+
+| Component | Frequency | Retention |
+|-----------|-----------|----------|
+| Database | Hourly | 30 days |
+| Crypto engine (Vault) | Daily | 90 days |
+| Configuration | On change | 90 days |
+| Full system snapshot | Weekly | 12 weeks |
+
+## Database Backup
+
+### PostgreSQL Backup
+
+Lamassu uses PostgreSQL with multiple schemas (or databases) for different services:
+
+- `ca` - Certificate Authority data
+- `devicemanager` - Device inventory
+- `dmsmanager` - DMS configurations
+- `alerts` - Alert subscriptions
+- `va` - Validation Authority
+- `kms` - Key Management Service
+
+### Automated Backup Script
+
+```bash
+#!/bin/bash
+# /usr/local/bin/lamassu-backup.sh
+
+set -euo pipefail
+
+# Configuration
+BACKUP_DIR="/backup/lamassu"
+PG_HOST="localhost"
+PG_USER="postgres"
+PG_DATABASE="lamassu"
+RETENTION_DAYS=30
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# Create backup directory
+mkdir -p "${BACKUP_DIR}"
+
+# Dump database with compression
+echo "Starting backup at $(date)"
+pg_dump -h "${PG_HOST}" -U "${PG_USER}" -d "${PG_DATABASE}" \
+  --format=custom \
+  --compress=9 \
+  --file="${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump"
+
+echo "Backup completed: lamassu_${TIMESTAMP}.dump"
+
+# Calculate checksum
+sha256sum "${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump" \
+  > "${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump.sha256"
+
+# Encrypt backup
+gpg --encrypt \
+  --recipient backup@yourorg.com \
+  --output "${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump.gpg" \
+  "${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump"
+
+# Remove unencrypted backup
+rm "${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump"
+
+# Upload to remote storage (S3 example)
+aws s3 cp "${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump.gpg" \
+  "s3://yourorg-lamassu-backups/database/" \
+  --sse aws:kms \
+  --sse-kms-key-id "arn:aws:kms:us-east-1:123456789:key/your-key-id"
+
+aws s3 cp "${BACKUP_DIR}/lamassu_${TIMESTAMP}.dump.sha256" \
+  "s3://yourorg-lamassu-backups/database/"
+
+# Clean up old local backups
+find "${BACKUP_DIR}" -name "lamassu_*.dump.gpg" -mtime +${RETENTION_DAYS} -delete
+find "${BACKUP_DIR}" -name "lamassu_*.sha256" -mtime +${RETENTION_DAYS} -delete
+
+echo "Backup process completed at $(date)"
+```
+
+**Schedule with cron:**
+
+```bash
+# Run backup every hour
+0 * * * * /usr/local/bin/lamassu-backup.sh >> /var/log/lamassu-backup.log 2>&1
+```
+
+### Point-in-Time Recovery
+
+Enable PostgreSQL Write-Ahead Logging (WAL) archiving for point-in-time recovery:
+
+```bash
+# postgresql.conf
+wal_level = replica
+archive_mode = on
+archive_command = 'test ! -f /backup/wal/%f && cp %p /backup/wal/%f'
+archive_timeout = 300  # Archive every 5 minutes
+```
+
+**Archive WAL files to S3:**
+
+```bash
+# Archive command for S3
+archive_command = 'aws s3 cp %p s3://yourorg-lamassu-backups/wal/%f'
+```
+
+### Multi-Schema Backup
+
+If using separate databases (legacy architecture):
+
+```bash
+#!/bin/bash
+# Backup all Lamassu databases
+
+DATABASES=("ca" "devicemanager" "dmsmanager" "alerts" "va" "kms")
+BACKUP_DIR="/backup/lamassu"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+for db in "${DATABASES[@]}"; do
+  echo "Backing up ${db}..."
+  pg_dump -h localhost -U postgres -d "${db}" \
+    --format=custom \
+    --compress=9 \
+    --file="${BACKUP_DIR}/${db}_${TIMESTAMP}.dump"
+done
+
+echo "All databases backed up"
+```
+
+## Restoring from Backup
+
+### Full Database Restore
+
+```bash
+#!/bin/bash
+# Restore Lamassu database from backup
+
+set -euo pipefail
+
+BACKUP_FILE="$1"
+PG_HOST="localhost"
+PG_USER="postgres"
+PG_DATABASE="lamassu"
+
+if [ -z "${BACKUP_FILE}" ]; then
+  echo "Usage: $0 <backup_file.dump>"
+  exit 1
+fi
+
+# Download from S3 if needed
+if [[ "${BACKUP_FILE}" == s3://* ]]; then
+  echo "Downloading backup from S3..."
+  LOCAL_FILE="/tmp/$(basename ${BACKUP_FILE})"
+  aws s3 cp "${BACKUP_FILE}" "${LOCAL_FILE}"
+  BACKUP_FILE="${LOCAL_FILE}"
+fi
+
+# Decrypt if encrypted
+if [[ "${BACKUP_FILE}" == *.gpg ]]; then
+  echo "Decrypting backup..."
+  gpg --decrypt "${BACKUP_FILE}" > "${BACKUP_FILE%.gpg}"
+  BACKUP_FILE="${BACKUP_FILE%.gpg}"
+fi
+
+# Verify checksum if available
+if [ -f "${BACKUP_FILE}.sha256" ]; then
+  echo "Verifying backup integrity..."
+  sha256sum -c "${BACKUP_FILE}.sha256"
+fi
+
+# Stop Lamassu services
+echo "Stopping Lamassu services..."
+systemctl stop lamassu-ca
+systemctl stop lamassu-device-manager
+systemctl stop lamassu-dms-manager
+
+# Drop existing database (CAUTION!)
+echo "Dropping existing database..."
+psql -h "${PG_HOST}" -U "${PG_USER}" -c "DROP DATABASE IF EXISTS ${PG_DATABASE};"
+
+# Recreate database
+echo "Creating database..."
+psql -h "${PG_HOST}" -U "${PG_USER}" -c "CREATE DATABASE ${PG_DATABASE};"
+
+# Restore from backup
+echo "Restoring from backup..."
+pg_restore -h "${PG_HOST}" -U "${PG_USER}" -d "${PG_DATABASE}" \
+  --verbose \
+  "${BACKUP_FILE}"
+
+echo "Database restore completed"
+
+# Restart services
+echo "Starting Lamassu services..."
+systemctl start lamassu-ca
+systemctl start lamassu-device-manager
+systemctl start lamassu-dms-manager
+
+echo "Restore process completed successfully"
+```
+
+### Point-in-Time Recovery
+
+Restore to a specific point in time using base backup + WAL replay:
+
+```bash
+#!/bin/bash
+# Point-in-time recovery to specific timestamp
+
+BASE_BACKUP="/backup/lamassu/lamassu_20250309_120000.dump"
+RECOVERY_TARGET="2025-03-09 14:30:00"
+
+# Restore base backup
+pg_restore -d lamassu "${BASE_BACKUP}"
+
+# Configure recovery target
+cat > /var/lib/postgresql/recovery.conf <<EOF
+restore_command = 'aws s3 cp s3://yourorg-lamassu-backups/wal/%f %p'
+recovery_target_time = '${RECOVERY_TARGET}'
+recovery_target_action = 'promote'
+EOF
+
+# Restart PostgreSQL to begin recovery
+systemctl restart postgresql
+
+# Monitor recovery progress
+tail -f /var/log/postgresql/postgresql.log
+```
+
+## Crypto Engine Backup
+
+### HashiCorp Vault Backup
+
+Vault stores CA private keys and must be backed up separately from the database.
+
+**Backup Vault snapshots:**
+
+```bash
+#!/bin/bash
+# Backup HashiCorp Vault
+
+VAULT_ADDR="https://vault.internal:8200"
+VAULT_TOKEN="${VAULT_TOKEN}"
+BACKUP_DIR="/backup/vault"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# Take snapshot (requires Vault Enterprise or Raft storage)
+vault operator raft snapshot save \
+  "${BACKUP_DIR}/vault_snapshot_${TIMESTAMP}.snap"
+
+# Encrypt snapshot
+gpg --encrypt \
+  --recipient backup@yourorg.com \
+  --output "${BACKUP_DIR}/vault_snapshot_${TIMESTAMP}.snap.gpg" \
+  "${BACKUP_DIR}/vault_snapshot_${TIMESTAMP}.snap"
+
+rm "${BACKUP_DIR}/vault_snapshot_${TIMESTAMP}.snap"
+
+# Upload to S3
+aws s3 cp "${BACKUP_DIR}/vault_snapshot_${TIMESTAMP}.snap.gpg" \
+  "s3://yourorg-lamassu-backups/vault/"
+```
+
+**Restore Vault from snapshot:**
+
+```bash
+# Stop Vault
+systemctl stop vault
+
+# Download snapshot
+aws s3 cp "s3://yourorg-lamassu-backups/vault/vault_snapshot_20250309.snap.gpg" \
+  /tmp/vault_snapshot.snap.gpg
+
+# Decrypt
+gpg --decrypt /tmp/vault_snapshot.snap.gpg > /tmp/vault_snapshot.snap
+
+# Restore snapshot
+vault operator raft snapshot restore /tmp/vault_snapshot.snap
+
+# Start Vault
+systemctl start vault
+```
+
+<Tip>
+Vault's auto-unseal feature with cloud KMS ensures Vault can automatically unseal after recovery without manual intervention.
+</Tip>
+
+### AWS KMS Backup
+
+AWS KMS keys are managed by AWS and automatically replicated. Back up key policies and aliases:
+
+```bash
+#!/bin/bash
+# Backup AWS KMS key metadata
+
+KEY_IDS=$(aws kms list-keys --query 'Keys[*].KeyId' --output text)
+BACKUP_DIR="/backup/aws-kms"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+mkdir -p "${BACKUP_DIR}/${TIMESTAMP}"
+
+for key_id in ${KEY_IDS}; do
+  # Export key policy
+  aws kms get-key-policy --key-id "${key_id}" --policy-name default \
+    > "${BACKUP_DIR}/${TIMESTAMP}/${key_id}_policy.json"
+  
+  # Export key metadata
+  aws kms describe-key --key-id "${key_id}" \
+    > "${BACKUP_DIR}/${TIMESTAMP}/${key_id}_metadata.json"
+  
+  # List aliases
+  aws kms list-aliases --key-id "${key_id}" \
+    > "${BACKUP_DIR}/${TIMESTAMP}/${key_id}_aliases.json"
+done
+
+# Archive
+tar -czf "${BACKUP_DIR}/kms_backup_${TIMESTAMP}.tar.gz" \
+  -C "${BACKUP_DIR}" "${TIMESTAMP}"
+```
+
+### PKCS#11 HSM Backup
+
+HSM key backup depends on your HSM vendor:
+
+**SoftHSM (development):**
+
+```bash
+# Backup SoftHSM token directory
+cp -r /var/lib/softhsm/tokens /backup/softhsm/tokens_$(date +%Y%m%d)
+```
+
+**Production HSM:**
+
+Follow vendor-specific procedures:
+- **Thales/Gemalto:** Use `nCipher Security World` backup
+- **Utimaco:** Export key blobs with m-of-n key splitting
+- **AWS CloudHSM:** Use CloudHSM cluster backups
+
+<Warning>
+HSM backup procedures often involve physical security tokens or key custodians. Document and test your HSM backup/restore procedure regularly.
+</Warning>
+
+## Configuration Backup
+
+### Service Configuration Files
+
+```bash
+#!/bin/bash
+# Backup Lamassu configuration
+
+CONFIG_DIRS=(
+  "/etc/lamassu"
+  "/etc/systemd/system/lamassu-*.service"
+  "/usr/local/bin/lamassu-*"
+)
+
+BACKUP_DIR="/backup/config"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+tar -czf "${BACKUP_DIR}/lamassu_config_${TIMESTAMP}.tar.gz" \
+  "${CONFIG_DIRS[@]}"
+
+# Upload to S3
+aws s3 cp "${BACKUP_DIR}/lamassu_config_${TIMESTAMP}.tar.gz" \
+  "s3://yourorg-lamassu-backups/config/"
+```
+
+### Infrastructure as Code
+
+Store configuration in version control:
+
+```bash
+# Git repository structure
+lamassu-infrastructure/
+├── terraform/           # Infrastructure definitions
+│   ├── vpc.tf
+│   ├── rds.tf
+│   └── eks.tf
+├── helm/                # Kubernetes manifests
+│   └── values.yaml
+├── ansible/             # Configuration management
+│   └── playbooks/
+└── configs/             # Service configurations
+    ├── ca-config.yaml
+    └── dms-config.yaml
+```
+
+## Disaster Recovery
+
+### Recovery Time Objective (RTO)
+
+Target recovery times:
+
+| Scenario | RTO | RPO |
+|----------|-----|-----|
+| Database failure | 30 minutes | 1 hour |
+| Vault failure | 1 hour | 1 day |
+| Full datacenter loss | 4 hours | 1 day |
+| Ransomware/corruption | 2 hours | 1 day |
+
+### Disaster Recovery Runbook
+
+<Steps>
+  <Step title="Assess Damage">
+    - Identify affected components (database, services, crypto engines)
+    - Determine root cause (hardware failure, data corruption, security incident)
+    - Declare incident and activate DR team
+  </Step>
+  
+  <Step title="Provision Infrastructure">
+    - Launch replacement VMs or containers
+    - Restore network configuration
+    - Configure DNS to point to DR environment
+  </Step>
+  
+  <Step title="Restore Database">
+    - Download latest backup from S3
+    - Decrypt and verify integrity
+    - Restore to PostgreSQL instance
+    - Apply WAL files for point-in-time recovery if needed
+  </Step>
+  
+  <Step title="Restore Crypto Engines">
+    - Restore Vault from snapshot OR
+    - Restore HSM keys from secure backup OR
+    - Verify AWS KMS keys are accessible
+  </Step>
+  
+  <Step title="Restore Configuration">
+    - Deploy service configurations from version control
+    - Restore TLS certificates
+    - Configure environment variables and secrets
+  </Step>
+  
+  <Step title="Start Services">
+    - Start database
+    - Start crypto engines (Vault)
+    - Start Lamassu services (CA, Device Manager, DMS Manager)
+    - Verify health checks pass
+  </Step>
+  
+  <Step title="Validate Operation">
+    - Test certificate issuance
+    - Test EST enrollment
+    - Verify API endpoints respond
+    - Check monitoring dashboards
+  </Step>
+  
+  <Step title="Resume Operations">
+    - Update DNS to production endpoints
+    - Notify stakeholders
+    - Monitor closely for 24 hours
+    - Conduct post-mortem
+  </Step>
+</Steps>
+
+### DR Testing
+
+Regularly test disaster recovery procedures:
+
+```bash
+#!/bin/bash
+# DR test script - Restore to isolated environment
+
+DR_ENV="dr-test"
+LATEST_BACKUP=$(aws s3 ls s3://yourorg-lamassu-backups/database/ | \
+  sort | tail -n 1 | awk '{print $4}')
+
+echo "Testing DR with backup: ${LATEST_BACKUP}"
+
+# Provision DR infrastructure
+terraform apply -var="environment=${DR_ENV}"
+
+# Restore database
+aws s3 cp "s3://yourorg-lamassu-backups/database/${LATEST_BACKUP}" \
+  /tmp/backup.dump.gpg
+gpg --decrypt /tmp/backup.dump.gpg > /tmp/backup.dump
+pg_restore -d lamassu_dr /tmp/backup.dump
+
+# Restore Vault
+aws s3 cp "s3://yourorg-lamassu-backups/vault/$(date +%Y%m%d)_snapshot.gpg" \
+  /tmp/vault.snap.gpg
+gpg --decrypt /tmp/vault.snap.gpg > /tmp/vault.snap
+vault operator raft snapshot restore /tmp/vault.snap
+
+# Validate
+curl -k https://lamassu-dr.example.com/api/ca/v1/health
+
+echo "DR test completed. Results in /var/log/dr-test-${DR_ENV}.log"
+```
+
+**Conduct DR drills quarterly.**
+
+## Backup Monitoring
+
+### Backup Success Tracking
+
+Monitor backup job completion:
+
+```bash
+# Check last successful backup
+LAST_BACKUP=$(aws s3 ls s3://yourorg-lamassu-backups/database/ | \
+  sort | tail -n 1 | awk '{print $4}')
+
+LAST_BACKUP_DATE=$(echo ${LAST_BACKUP} | grep -oP '\d{8}_\d{6}')
+LAST_BACKUP_EPOCH=$(date -d "${LAST_BACKUP_DATE:0:8} ${LAST_BACKUP_DATE:9:2}:${LAST_BACKUP_DATE:11:2}:${LAST_BACKUP_DATE:13:2}" +%s)
+NOW_EPOCH=$(date +%s)
+
+HOURS_SINCE=$(( (NOW_EPOCH - LAST_BACKUP_EPOCH) / 3600 ))
+
+if [ ${HOURS_SINCE} -gt 2 ]; then
+  echo "CRITICAL: Last backup was ${HOURS_SINCE} hours ago"
+  exit 2
+fi
+
+echo "OK: Last backup ${HOURS_SINCE} hours ago"
+```
+
+### Backup Integrity Validation
+
+```bash
+#!/bin/bash
+# Validate backup integrity weekly
+
+LATEST_BACKUP=$(aws s3 ls s3://yourorg-lamassu-backups/database/ | \
+  sort | tail -n 1 | awk '{print $4}')
+
+# Download backup and checksum
+aws s3 cp "s3://yourorg-lamassu-backups/database/${LATEST_BACKUP}" /tmp/
+aws s3 cp "s3://yourorg-lamassu-backups/database/${LATEST_BACKUP%.gpg}.sha256" /tmp/
+
+# Verify checksum
+cd /tmp
+sha256sum -c "${LATEST_BACKUP%.gpg}.sha256"
+
+if [ $? -eq 0 ]; then
+  echo "Backup integrity verified"
+  # Test restore to temporary database
+  gpg --decrypt "/tmp/${LATEST_BACKUP}" > /tmp/test.dump
+  createdb test_restore
+  pg_restore -d test_restore /tmp/test.dump
+  
+  if [ $? -eq 0 ]; then
+    echo "Backup restore test successful"
+  else
+    echo "CRITICAL: Backup restore test failed"
+    exit 2
+  fi
+  
+  dropdb test_restore
+else
+  echo "CRITICAL: Backup checksum verification failed"
+  exit 2
+fi
+```
+
+## Related Topics
+
+- [Monitoring](/operations/monitoring) - Observability and metrics
+- [Troubleshooting](/operations/troubleshooting) - Common issues
+- [Security Best Practices](/security/best-practices) - Security hardening

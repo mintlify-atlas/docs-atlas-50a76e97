@@ -1,0 +1,384 @@
+---
+title: EST Enrollment Setup
+description: Configure and use Enrollment over Secure Transport (RFC 7030) for automated device enrollment
+---
+
+EST (Enrollment over Secure Transport) provides a standardized protocol for automated certificate enrollment, allowing devices to securely obtain and renew certificates.
+
+## Overview
+
+Lamassu implements EST (RFC 7030) through the **DMS Manager** service. EST endpoints enable devices to:
+
+- Retrieve CA certificates
+- Enroll for new certificates
+- Re-enroll to renew existing certificates
+- Request server-generated keys (optional)
+
+### EST URL Structure
+
+All EST endpoints include the DMS ID as part of the path:
+
+```
+https://<HOST>/.well-known/est/<DMS_ID>/<operation>
+```
+
+For example:
+```
+https://est.example.com/.well-known/est/manufacturing-dms/simpleenroll
+```
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install required tools">
+    Ensure OpenSSL and curl are installed:
+
+    ```bash
+    # Verify OpenSSL
+    openssl version
+
+    # Verify curl
+    curl --version
+    ```
+  </Step>
+
+  <Step title="Identify your DMS ID">
+    Get your DMS identifier from the DMS Manager:
+
+    ```bash
+    curl https://lamassu.example.com/api/dmsmanager/v1/dms \
+      -H "Authorization: Bearer $TOKEN"
+    ```
+  </Step>
+
+  <Step title="Prepare authentication credentials">
+    Depending on DMS configuration, you'll need:
+    - **mTLS**: Client certificate and key (most common)
+    - **NoAuth**: No credentials required (for initial enrollment scenarios)
+    - **Webhook**: External authorization handled by the DMS
+  </Step>
+</Steps>
+
+## Retrieve CA Certificates
+
+Fetch the trust anchor (CA certificate) before enrolling.
+
+<Steps>
+  <Step title="Request CA certificates">
+    ```bash
+    curl -s -k "https://est.example.com/.well-known/est/manufacturing-dms/cacerts" \
+      -o cacerts.b64
+    ```
+
+    The response is a Base64-encoded PKCS#7 file containing the CA certificate chain.
+  </Step>
+
+  <Step title="Convert to PEM format">
+    ```bash
+    # Decode Base64 to DER
+    base64 -d cacerts.b64 > cacerts.p7b
+
+    # Extract certificates from PKCS#7
+    openssl pkcs7 -inform DER -in cacerts.p7b -print_certs -out cacerts.pem
+    ```
+  </Step>
+
+  <Step title="Inspect the CA certificate">
+    ```bash
+    openssl x509 -in cacerts.pem -text -noout
+    ```
+  </Step>
+</Steps>
+
+## Enroll a Device
+
+Devices submit a Certificate Signing Request (CSR) to obtain a certificate.
+
+### Generate Key and CSR
+
+<Steps>
+  <Step title="Generate device key">
+    ```bash
+    openssl genpkey -algorithm RSA -out device.key -pkeyopt rsa_keygen_bits:2048
+    ```
+  </Step>
+
+  <Step title="Create CSR">
+    ```bash
+    openssl req -new -key device.key -out device.csr \
+      -subj "/CN=device-001/O=Acme Corp"
+    ```
+  </Step>
+
+  <Step title="Convert CSR to Base64 DER">
+    Lamassu expects the CSR body as **Base64-encoded DER** (without PEM headers):
+
+    ```bash
+    openssl req -in device.csr -outform DER | base64 -w 0 > device.b64
+    ```
+  </Step>
+</Steps>
+
+### Submit Enrollment Request
+
+<Tabs>
+  <Tab title="mTLS Authentication">
+    Use a bootstrap certificate for authentication:
+
+    ```bash
+    curl -v -s -k \
+      --cert bootstrap.crt --key bootstrap.key \
+      -H "Content-Type: application/pkcs10" \
+      --data-binary "@device.b64" \
+      "https://est.example.com/.well-known/est/manufacturing-dms/simpleenroll" \
+      -o enroll_resp.b64
+    ```
+
+    <Note>
+      The bootstrap certificate must be issued by a CA trusted by the DMS (configured in the DMS `ValidationCAs`).
+    </Note>
+  </Tab>
+
+  <Tab title="No Authentication">
+    If the DMS allows `NoAuth` enrollment:
+
+    ```bash
+    curl -v -s -k \
+      -H "Content-Type: application/pkcs10" \
+      --data-binary "@device.b64" \
+      "https://est.example.com/.well-known/est/manufacturing-dms/simpleenroll" \
+      -o enroll_resp.b64
+    ```
+
+    <Warning>
+      NoAuth enrollment should only be enabled in controlled manufacturing environments or for initial device provisioning.
+    </Warning>
+  </Tab>
+</Tabs>
+
+### Extract the Issued Certificate
+
+<Steps>
+  <Step title="Decode response">
+    The response is a Base64-encoded PKCS#7 containing the issued certificate:
+
+    ```bash
+    base64 -d enroll_resp.b64 > enroll_resp.p7b
+    ```
+  </Step>
+
+  <Step title="Extract certificate">
+    ```bash
+    openssl pkcs7 -inform DER -in enroll_resp.p7b -print_certs -out device_cert.pem
+    ```
+  </Step>
+
+  <Step title="Verify certificate">
+    ```bash
+    openssl verify -CAfile cacerts.pem device_cert.pem
+    ```
+
+    Output should be:
+    ```
+    device_cert.pem: OK
+    ```
+  </Step>
+</Steps>
+
+## Re-enroll to Renew Certificate
+
+Devices use their existing certificate to authenticate and obtain a renewed certificate.
+
+<Steps>
+  <Step title="Generate new CSR">
+    ```bash
+    openssl req -new -key device.key -out device_re.csr \
+      -subj "/CN=device-001/O=Acme Corp"
+    openssl req -in device_re.csr -outform DER | base64 -w 0 > device_re.b64
+    ```
+  </Step>
+
+  <Step title="Submit re-enrollment request">
+    Use the **current certificate** to authenticate:
+
+    ```bash
+    curl -v -s -k \
+      --cert device_cert.pem --key device.key \
+      -H "Content-Type: application/pkcs10" \
+      --data-binary "@device_re.b64" \
+      "https://est.example.com/.well-known/est/manufacturing-dms/simplereenroll" \
+      -o reenroll_resp.b64
+    ```
+  </Step>
+
+  <Step title="Extract renewed certificate">
+    ```bash
+    base64 -d reenroll_resp.b64 | openssl pkcs7 -inform DER -print_certs -out device_re_cert.pem
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Re-enrollment is recommended before the current certificate expires. Configure the renewal window in the issuance profile.
+</Note>
+
+## Server-Side Key Generation
+
+Request the server to generate the private key on behalf of the device.
+
+<Warning>
+  Server-side key generation should only be used in constrained devices unable to generate keys locally. The private key is transmitted to the device over TLS.
+</Warning>
+
+```bash
+curl -v -s -k \
+  --cert device_cert.pem --key device.key \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary "@device.b64" \
+  "https://est.example.com/.well-known/est/manufacturing-dms/serverkeygen" \
+  -o response.mime
+```
+
+The response is a `multipart/mixed` message with boundary `--estServerLamassuBoundary` containing:
+1. **Private Key** (`application/pkcs8`) - Base64 encoded
+2. **Certificate** (`application/pkcs7-mime`) - Base64 encoded
+
+You'll need to manually parse the MIME parts to extract the key and certificate.
+
+## Get CSR Attributes
+
+Retrieve recommended CSR attributes from the DMS:
+
+```bash
+curl -s -k "https://est.example.com/.well-known/est/manufacturing-dms/csrattrs" \
+  -o csrattrs.b64
+```
+
+This returns a Base64-encoded structure describing required or recommended CSR attributes.
+
+## Complete Enrollment Script
+
+Here's a complete one-shot script for EST enrollment with mTLS:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+EST_HOST="https://est.example.com"
+DMS_ID="manufacturing-dms"
+AUTH_CERT="bootstrap.crt"
+AUTH_KEY="bootstrap.key"
+
+# Output files
+KEY="device.key"
+CSR_DER="device.csr.der"
+CSR_B64="device.csr.b64"
+CA_B64="cacerts.b64"
+CA_PEM="cacerts.pem"
+RESP_B64="resp.b64"
+DEV_PEM="device_final.pem"
+
+echo "1. Generating Key..."
+openssl genpkey -algorithm RSA -out $KEY -pkeyopt rsa_keygen_bits:2048
+openssl req -new -key $KEY -outform DER -out $CSR_DER -subj "/CN=device-XX/O=Lamassu"
+base64 -w 0 $CSR_DER > $CSR_B64
+
+echo "2. Fetching CA Certificates..."
+curl -s -k "$EST_HOST/.well-known/est/$DMS_ID/cacerts" -o $CA_B64
+base64 -d $CA_B64 | openssl pkcs7 -inform DER -print_certs -out $CA_PEM
+
+echo "3. Enrolling..."
+curl -s -k \
+  --cert $AUTH_CERT --key $AUTH_KEY \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary "@$CSR_B64" \
+  "$EST_HOST/.well-known/est/$DMS_ID/simpleenroll" \
+  -o $RESP_B64
+
+echo "4. Processing Response..."
+if [ -s "$RESP_B64" ]; then
+    base64 -d $RESP_B64 | openssl pkcs7 -inform DER -print_certs -out $DEV_PEM
+    openssl verify -CAfile $CA_PEM $DEV_PEM && echo "SUCCESS: Certificate Enrolled & Verified"
+else
+    echo "ERROR: Empty response"
+    exit 1
+fi
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="400 Bad Request">
+    **Cause**: Malformed request body
+
+    **Solution**: Ensure you're sending **Base64-encoded DER**, not PEM format:
+    ```bash
+    # Correct
+    openssl req -in device.csr -outform DER | base64 -w 0 > device.b64
+
+    # Incorrect - DO NOT use PEM
+    cat device.csr > device.b64
+    ```
+  </Accordion>
+
+  <Accordion title="401 Unauthorized / 403 Forbidden">
+    **Cause**: Authentication failure
+
+    **Solutions**:
+    - Verify the client certificate is valid and trusted by the DMS
+    - Check the DMS `ValidationCAs` configuration
+    - Ensure the certificate hasn't expired
+    - Verify the DMS authentication mode (mTLS, NoAuth, Webhook)
+  </Accordion>
+
+  <Accordion title="404 Not Found">
+    **Cause**: Incorrect DMS ID or endpoint
+
+    **Solution**: Verify the DMS ID and EST URL structure:
+    ```bash
+    # Check DMS exists
+    curl https://lamassu.example.com/api/dmsmanager/v1/dms/manufacturing-dms \
+      -H "Authorization: Bearer $TOKEN"
+    ```
+  </Accordion>
+
+  <Accordion title="Empty Response">
+    **Cause**: Server rejected the request but returned 200 OK
+
+    **Solution**: Check server logs for details. Common causes:
+    - CSR validation failed
+    - Profile restrictions not met
+    - DMS misconfiguration
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use mTLS" icon="lock">
+    Always use mTLS authentication in production. NoAuth should only be used in isolated manufacturing environments.
+  </Card>
+
+  <Card title="Automate Renewal" icon="rotate">
+    Configure devices to automatically re-enroll before certificates expire using the `simplereenroll` endpoint.
+  </Card>
+
+  <Card title="Validate Responses" icon="shield-check">
+    Always verify the issued certificate against the CA trust anchor before storing it.
+  </Card>
+
+  <Card title="Secure Bootstrap Certs" icon="key">
+    Protect bootstrap certificates with hardware security modules or secure element storage.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Device Lifecycle" icon="microchip" href="/guides/device-lifecycle">
+    Manage device inventory and status
+  </Card>
+  <Card title="Issuance Profiles" icon="file-certificate" href="/guides/issuance-profiles">
+    Configure certificate policies
+  </Card>
+</CardGroup>

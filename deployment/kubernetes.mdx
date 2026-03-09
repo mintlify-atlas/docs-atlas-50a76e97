@@ -1,0 +1,642 @@
+---
+title: Kubernetes Deployment
+description: Deploy Lamassu IoT in production using Kubernetes and Helm charts
+icon: dharmachakra
+---
+
+Deploy Lamassu IoT as a distributed microservices architecture on Kubernetes for production workloads requiring high availability, horizontal scaling, and enterprise integration.
+
+## Prerequisites
+
+<Steps>
+  <Step title="Kubernetes Cluster">
+    A running Kubernetes cluster (v1.24+) with:
+    - At least 3 worker nodes (recommended)
+    - 8 GB RAM minimum per node
+    - 50 GB storage available
+    - Ingress controller configured (NGINX, Traefik, etc.)
+  </Step>
+  
+  <Step title="Helm 3">
+    Install Helm 3.0+ for chart management:
+    ```bash
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    ```
+  </Step>
+  
+  <Step title="kubectl">
+    Configure `kubectl` access to your cluster:
+    ```bash
+    kubectl cluster-info
+    kubectl get nodes
+    ```
+  </Step>
+</Steps>
+
+## Installation
+
+### Using Helm Charts
+
+The official Helm charts are maintained in a separate repository:
+
+<CodeGroup>
+  ```bash Add Repository
+  helm repo add lamassu https://lamassuiot.github.io/lamassu-helm
+  helm repo update
+  ```
+  
+  ```bash Install
+  helm install lamassu lamassu/lamassu \
+    --namespace lamassu-system \
+    --create-namespace
+  ```
+  
+  ```bash Custom Values
+  helm install lamassu lamassu/lamassu \
+    --namespace lamassu-system \
+    --create-namespace \
+    --values custom-values.yaml
+  ```
+</CodeGroup>
+
+<Note>
+  For detailed Helm chart configuration, refer to the [lamassu-helm repository](https://github.com/lamassuiot/lamassu-helm).
+</Note>
+
+## Service Architecture
+
+Each Lamassu service runs as an independent Kubernetes Deployment:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lamassu-ca
+  namespace: lamassu-system
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: lamassu-ca
+  template:
+    metadata:
+      labels:
+        app: lamassu-ca
+    spec:
+      containers:
+      - name: ca
+        image: ghcr.io/lamassuiot/lamassu-ca:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: LOGS__LEVEL
+          value: "info"
+        - name: SERVER__PORT
+          value: "8080"
+        - name: STORAGE__PROVIDER
+          value: "postgres"
+```
+
+## Container Images
+
+All services are available as multi-arch container images:
+
+| Service | Image | Platforms |
+|---------|-------|----------|
+| **CA** | `ghcr.io/lamassuiot/lamassu-ca:latest` | linux/amd64, linux/arm64 |
+| **Device Manager** | `ghcr.io/lamassuiot/lamassu-device-manager:latest` | linux/amd64, linux/arm64 |
+| **DMS Manager** | `ghcr.io/lamassuiot/lamassu-dms-manager:latest` | linux/amd64, linux/arm64 |
+| **KMS** | `ghcr.io/lamassuiot/lamassu-kms:latest` | linux/amd64, linux/arm64 |
+| **Alerts** | `ghcr.io/lamassuiot/lamassu-alerts:latest` | linux/amd64, linux/arm64 |
+| **VA** | `ghcr.io/lamassuiot/lamassu-va:latest` | linux/amd64, linux/arm64 |
+| **UI** | `ghcr.io/lamassuiot/lamassu-ui:latest` | linux/amd64, linux/arm64 |
+
+### Dockerfile Reference
+
+Services are built using multi-stage Dockerfiles for optimized image size:
+
+<Tabs>
+  <Tab title="CA Service">
+    ```dockerfile ca.dockerfile
+    FROM golang:1.24.3-bullseye
+    WORKDIR /app
+    
+    COPY core core
+    COPY shared shared
+    COPY sdk sdk
+    COPY backend backend
+    COPY engines engines
+    COPY monolithic monolithic
+    COPY connectors connectors
+    
+    COPY go.work go.work
+    COPY go.work.sum go.work.sum
+    
+    ARG SHA1VER=
+    ARG VERSION=
+    
+    RUN go work vendor
+    
+    ENV GOSUMDB=off
+    RUN now=$(TZ=GMT date +"%Y-%m-%dT%H:%M:%SZ")&& \
+        go build -ldflags "-X main.version=$VERSION -X main.sha1ver=$SHA1VER -X main.buildTime=$now" -mod vendor -o ca backend/cmd/ca/main.go 
+    
+    FROM ubuntu:20.04
+    
+    ARG USERNAME=lamassu
+    ARG USER_UID=1000
+    ARG USER_GID=$USER_UID
+    
+    RUN groupadd --gid "$USER_GID" "$USERNAME" \
+        && useradd --uid "$USER_UID" --gid "$USER_GID" -m "$USERNAME" 
+    
+    USER $USERNAME
+    
+    COPY --from=0 /app/ca /
+    CMD ["/ca"]
+    ```
+  </Tab>
+  
+  <Tab title="KMS Service">
+    ```dockerfile kms.dockerfile
+    FROM golang:1.24.3-bullseye
+    WORKDIR /app
+    
+    COPY core core
+    COPY shared shared
+    COPY sdk sdk
+    COPY backend backend
+    COPY engines engines
+    COPY monolithic monolithic
+    COPY connectors connectors
+    
+    COPY go.work go.work
+    COPY go.work.sum go.work.sum
+    
+    ARG SHA1VER=
+    ARG VERSION=
+    
+    RUN go work vendor
+    
+    ENV GOSUMDB=off
+    RUN now=$(TZ=GMT date +"%Y-%m-%dT%H:%M:%SZ")&& \ 
+        go build -ldflags "-X main.version=$VERSION -X main.sha1ver=$SHA1VER -X main.buildTime=$now" -mod vendor -o kms backend/cmd/kms/main.go 
+    
+    # Ubuntu base for PKCS#11 HSM support
+    FROM ubuntu:20.04
+    ARG DEBIAN_FRONTEND=noninteractive
+    
+    # PKCS#11 proxy and OpenSC tools
+    RUN apt-get update && \
+        apt-get --no-install-recommends install -y git-core libc6-dev gcc make cmake libssl-dev libseccomp-dev opensc ca-certificates && \
+        apt-get clean
+    
+    RUN git clone https://github.com/SUNET/pkcs11-proxy && \
+        cd pkcs11-proxy && \
+        cmake . && make && make install
+    
+    RUN rm -rf /pkcs11-proxy
+    RUN apt-get remove -y git-core libc6-dev gcc make cmake libssl-dev libseccomp-dev && \
+        apt-get autoremove -y && \
+        apt-get clean
+    
+    ARG USERNAME=lamassu
+    ARG USER_UID=1000
+    ARG USER_GID=$USER_UID
+    
+    RUN groupadd --gid "$USER_GID" "$USERNAME" \
+        && useradd --uid "$USER_UID" --gid "$USER_GID" -m "$USERNAME" 
+    
+    USER $USERNAME
+    
+    COPY --from=0 /app/kms /
+    CMD ["/kms"]
+    ```
+  </Tab>
+  
+  <Tab title="Device Manager">
+    ```dockerfile devmanager.dockerfile
+    FROM golang:1.24.3-bullseye
+    WORKDIR /app
+    
+    COPY core core
+    COPY shared shared
+    COPY sdk sdk
+    COPY backend backend
+    COPY engines engines
+    COPY monolithic monolithic
+    COPY connectors connectors
+    
+    COPY go.work go.work
+    COPY go.work.sum go.work.sum
+    
+    ARG SHA1VER=
+    ARG VERSION=
+    
+    RUN go work vendor
+    
+    ENV GOSUMDB=off
+    RUN now=$(TZ=GMT date +"%Y-%m-%dT%H:%M:%SZ")&& \
+        go build -ldflags "-X main.version=$VERSION -X main.sha1ver=$SHA1VER -X main.buildTime=$now" -mod vendor -o device-manager backend/cmd/device-manager/main.go 
+    
+    FROM ubuntu:20.04
+    
+    ARG USERNAME=lamassu
+    ARG USER_UID=1000
+    ARG USER_GID=$USER_UID
+    
+    RUN groupadd --gid "$USER_GID" "$USERNAME" \
+        && useradd --uid "$USER_UID" --gid "$USER_GID" -m "$USERNAME" 
+    
+    USER $USERNAME
+    
+    COPY --from=0 /app/device-manager /
+    CMD ["/device-manager"]
+    ```
+  </Tab>
+</Tabs>
+
+## Infrastructure Dependencies
+
+### PostgreSQL
+
+Deploy PostgreSQL using a StatefulSet or external managed service:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: lamassu-system
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: lamassu-system
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15
+        env:
+        - name: POSTGRES_USER
+          value: lamassu
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: POSTGRES_DB
+          value: lamassu
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+```
+
+### RabbitMQ
+
+Deploy RabbitMQ for asynchronous messaging:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: lamassu-system
+spec:
+  ports:
+  - name: amqp
+    port: 5672
+  - name: management
+    port: 15672
+  selector:
+    app: rabbitmq
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: lamassu-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3-management
+        ports:
+        - containerPort: 5672
+        - containerPort: 15672
+        env:
+        - name: RABBITMQ_DEFAULT_USER
+          value: lamassu
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-credentials
+              key: password
+```
+
+### HashiCorp Vault
+
+For production crypto operations, deploy Vault in HA mode:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: lamassu-system
+spec:
+  ports:
+  - port: 8200
+  selector:
+    app: vault
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: lamassu-system
+spec:
+  serviceName: vault
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      containers:
+      - name: vault
+        image: hashicorp/vault:latest
+        ports:
+        - containerPort: 8200
+        env:
+        - name: VAULT_ADDR
+          value: "http://127.0.0.1:8200"
+        volumeMounts:
+        - name: vault-config
+          mountPath: /vault/config
+        - name: vault-data
+          mountPath: /vault/data
+      volumes:
+      - name: vault-config
+        configMap:
+          name: vault-config
+  volumeClaimTemplates:
+  - metadata:
+      name: vault-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+<Warning>
+  Production Vault deployments require careful unsealing procedures and backup strategies. Refer to the [Vault documentation](https://www.vaultproject.io/docs/platform/k8s) for best practices.
+</Warning>
+
+## Configuration Management
+
+### ConfigMap Example
+
+Store non-sensitive configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lamassu-ca-config
+  namespace: lamassu-system
+data:
+  LOGS__LEVEL: "info"
+  SERVER__PORT: "8080"
+  SERVER__PROTOCOL: "http"
+  STORAGE__PROVIDER: "postgres"
+  STORAGE__LOG_LEVEL: "warn"
+  PUBLISHER_EVENT_BUS__ENABLED: "true"
+  PUBLISHER_EVENT_BUS__PROVIDER: "amqp"
+```
+
+### Secrets Management
+
+Store sensitive credentials:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lamassu-ca-secrets
+  namespace: lamassu-system
+type: Opaque
+stringData:
+  STORAGE__CONFIG__PASSWORD: "your-postgres-password"
+  PUBLISHER_EVENT_BUS__BASIC_AUTH__PASSWORD: "your-rabbitmq-password"
+```
+
+Reference secrets in deployments:
+
+```yaml
+envFrom:
+- configMapRef:
+    name: lamassu-ca-config
+- secretRef:
+    name: lamassu-ca-secrets
+```
+
+## Ingress Configuration
+
+Expose the UI and API using an Ingress:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lamassu-ingress
+  namespace: lamassu-system
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - lamassu.example.com
+    secretName: lamassu-tls
+  rules:
+  - host: lamassu.example.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: lamassu-gateway
+            port:
+              number: 8080
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: lamassu-ui
+            port:
+              number: 80
+```
+
+## Observability
+
+### Prometheus Monitoring
+
+Services expose Prometheus metrics on `/metrics` (when OTEL is enabled):
+
+```yaml
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: lamassu-ca
+  namespace: lamassu-system
+spec:
+  selector:
+    matchLabels:
+      app: lamassu-ca
+  endpoints:
+  - port: http
+    path: /metrics
+```
+
+### OpenTelemetry Tracing
+
+Enable distributed tracing:
+
+```yaml
+env:
+- name: OTEL__TRACES__ENABLED
+  value: "true"
+- name: OTEL__TRACES__EXPORTER
+  value: "otlp"
+- name: OTEL__TRACES__ENDPOINT
+  value: "http://otel-collector:4318"
+```
+
+## Health Checks
+
+Configure liveness and readiness probes:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /v1/health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /v1/health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 5
+```
+
+## Scaling
+
+Horizontal Pod Autoscaling:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: lamassu-ca
+  namespace: lamassu-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lamassu-ca
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+```
+
+## Production Checklist
+
+<Steps>
+  <Step title="High Availability">
+    - [ ] Run at least 3 replicas per service
+    - [ ] Configure pod anti-affinity rules
+    - [ ] Use PodDisruptionBudgets
+  </Step>
+  
+  <Step title="Security">
+    - [ ] Enable network policies
+    - [ ] Use Secrets for all credentials
+    - [ ] Configure RBAC properly
+    - [ ] Enable mTLS between services
+    - [ ] Use external secrets management (Vault, AWS Secrets Manager)
+  </Step>
+  
+  <Step title="Storage">
+    - [ ] Use persistent volumes for stateful services
+    - [ ] Configure backup strategies for PostgreSQL
+    - [ ] Use StorageClass with appropriate performance
+  </Step>
+  
+  <Step title="Monitoring">
+    - [ ] Deploy Prometheus and Grafana
+    - [ ] Configure alerting rules
+    - [ ] Set up log aggregation (ELK, Loki)
+    - [ ] Enable distributed tracing
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Reference" icon="gear" href="/deployment/configuration">
+    Environment variables and detailed config options
+  </Card>
+  <Card title="Helm Charts" icon="chart-simple" href="https://github.com/lamassuiot/lamassu-helm">
+    Official Kubernetes deployment manifests
+  </Card>
+</CardGroup>

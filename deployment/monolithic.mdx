@@ -1,0 +1,344 @@
+---
+title: Monolithic Deployment
+description: Deploy Lamassu IoT as a single unified application for development and testing
+icon: cube
+---
+
+The monolithic deployment mode runs all Lamassu services in a single process with automatic dependency management. This is the recommended approach for local development, demos, and proof-of-concept deployments.
+
+## Quick Start
+
+### Run from Source
+
+The fastest way to get Lamassu running locally:
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone https://github.com/lamassuiot/lamassuiot.git
+    cd lamassuiot
+    ```
+  </Step>
+  
+  <Step title="Install Dependencies">
+    Ensure Docker is running, then initialize Go modules:
+    ```bash
+    go work sync
+    go mod tidy -e ./...
+    ```
+  </Step>
+  
+  <Step title="Launch Monolithic Server">
+    ```bash
+    go run ./monolithic/cmd/development/main.go
+    ```
+    
+    The launcher will automatically:
+    - Start PostgreSQL, RabbitMQ, and Vault containers
+    - Initialize all Lamassu services
+    - Launch the UI container
+    - Configure service networking
+  </Step>
+  
+  <Step title="Access the Dashboard">
+    Once you see the "READY TO PKI" banner:
+    
+    - **Web UI:** http://localhost:8080 or https://localhost:8443
+    - **API:** https://localhost:8443/api
+  </Step>
+</Steps>
+
+<Note>
+  The monolithic launcher uses Docker to run infrastructure dependencies (PostgreSQL, RabbitMQ, Vault, and the UI). All containers are automatically labeled with `group=lamassuiot-monolithic` for easy cleanup.
+</Note>
+
+## Docker Deployment
+
+### Using Pre-built Image
+
+```bash
+docker run -d \
+  --name lamassu-monolithic \
+  -p 8080:8080 \
+  -p 8443:8443 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/lamassuiot/lamassu-monolithic:latest
+```
+
+<Warning>
+  The container requires access to the Docker socket (`/var/run/docker.sock`) to launch infrastructure dependencies.
+</Warning>
+
+### Build from Source
+
+Use the official Dockerfile to build a custom image:
+
+```dockerfile monolithic.dockerfile
+FROM golang:1.24.3-bullseye
+WORKDIR /app
+
+COPY core core
+COPY shared shared
+COPY sdk sdk
+COPY backend backend
+COPY engines engines
+COPY monolithic monolithic
+COPY connectors connectors
+
+COPY go.work go.work
+COPY go.work.sum go.work.sum
+
+ARG SHA1VER=
+ARG VERSION=
+
+RUN go work vendor
+RUN go build -mod vendor -o monolithic monolithic/cmd/development/main.go 
+
+FROM ubuntu:20.04
+
+ARG USERNAME=lamassu
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
+RUN groupadd --gid "$USER_GID" "$USERNAME" \
+    && useradd --uid "$USER_UID" --gid "$USER_GID" -m "$USERNAME" 
+
+USER $USERNAME
+
+COPY --from=0 /app/monolithic /
+CMD ["/monolithic"]
+```
+
+Build and run:
+
+```bash
+docker build -f ci/monolithic.dockerfile -t lamassu-monolithic:local .
+docker run -p 8080:8080 -p 8443:8443 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  lamassu-monolithic:local
+```
+
+## Configuration Flags
+
+The monolithic launcher supports extensive command-line flags for customization:
+
+### Crypto Engine Options
+
+```bash
+go run ./monolithic/cmd/development/main.go \
+  --cryptoengines="vault,filesystem,aws-kms"
+```
+
+<Tabs>
+  <Tab title="Filesystem">
+    ```bash
+    --cryptoengines="filesystem"
+    ```
+    
+    Stores keys on local disk. **Development only** - not secure for production.
+  </Tab>
+  
+  <Tab title="HashiCorp Vault">
+    ```bash
+    --cryptoengines="vault"
+    ```
+    
+    Automatically launches Vault in dev mode using Docker.
+  </Tab>
+  
+  <Tab title="AWS KMS">
+    ```bash
+    --cryptoengines="aws-kms"
+    ```
+    
+    Uses AWS KMS via LocalStack for local testing.
+  </Tab>
+  
+  <Tab title="AWS Secrets Manager">
+    ```bash
+    --cryptoengines="aws-secrets"
+    ```
+    
+    Stores keys in AWS Secrets Manager (LocalStack for local dev).
+  </Tab>
+  
+  <Tab title="PKCS#11 HSM">
+    ```bash
+    --cryptoengines="pkcs11" \
+    --hsm-module-path="/usr/lib/softhsm/libsofthsm2.so"
+    ```
+    
+    Connect to hardware security modules via PKCS#11 interface.
+  </Tab>
+</Tabs>
+
+### Storage Options
+
+```bash
+# Use SQLite instead of PostgreSQL (in-memory)
+go run ./monolithic/cmd/development/main.go --sqlite
+```
+
+<Note>
+  SQLite mode uses an ephemeral in-memory database (`file::memory:?cache=shared`). Data is lost when the process stops.
+</Note>
+
+### Event Bus Options
+
+<CodeGroup>
+  ```bash RabbitMQ (Default)
+  # RabbitMQ is launched automatically via Docker
+  go run ./monolithic/cmd/development/main.go
+  ```
+  
+  ```bash In-Memory
+  # No Docker required - uses Go channels
+  go run ./monolithic/cmd/development/main.go --inmemory-eventbus
+  ```
+  
+  ```bash Disabled
+  # Disables asynchronous event processing
+  go run ./monolithic/cmd/development/main.go --disable-eventbus
+  ```
+  
+  ```bash AWS SQS/SNS
+  # Use AWS services (LocalStack for local dev)
+  go run ./monolithic/cmd/development/main.go --use-aws-eventbus
+  ```
+</CodeGroup>
+
+### AWS IoT Core Integration
+
+Enable the AWS IoT connector for cloud integration:
+
+```bash
+go run ./monolithic/cmd/development/main.go \
+  --awsiot \
+  --awsiot-id="my-connector" \
+  --awsiot-keyid="AKIAXXXXXXXXXXXXXXXX" \
+  --awsiot-keysecret="your-secret-key" \
+  --awsiot-region="us-west-2"
+```
+
+### Additional Flags
+
+| Flag | Description | Default |
+|------|-------------|--------|
+| `--standard-docker-ports` | Use standard ports for Docker services | `true` |
+| `--disable-monitor` | Disable certificate monitoring job | `false` |
+| `--disable-ui` | Skip launching the UI container | `false` |
+| `--sample-data` | Populate with sample CAs, devices, and certificates | `false` |
+
+## Assembly Modes
+
+The monolithic build supports two internal architectures:
+
+### HTTP Mode (Default)
+
+Each service runs as an independent HTTP server. Services communicate via SDK clients over HTTP.
+
+```go
+AssemblyMode: pkg.Http
+```
+
+**Configuration:**
+- CA Service: Internal HTTP port
+- Device Manager: Internal HTTP port  
+- KMS: Internal HTTP port
+- Gateway: Exposed at `:8080` (HTTP) and `:8443` (HTTPS)
+
+### In-Memory Mode
+
+Services share the same process and communicate via direct function calls.
+
+```go
+AssemblyMode: pkg.InMemory
+```
+
+**Benefits:** Lower latency, reduced network overhead  
+**Use case:** High-performance development testing
+
+## Sample Data
+
+Populate the system with test data for manual exploration:
+
+```bash
+go run ./monolithic/cmd/development/main.go --sample-data
+```
+
+This creates:
+- Sample Certificate Authorities
+- Test device registrations
+- Example certificate hierarchies
+- Pre-configured policies
+
+<Warning>
+  Sample data is intended for development only. Do not use in production environments.
+</Warning>
+
+## Service Endpoints
+
+Once running, the following endpoints are available:
+
+| Service | Endpoint | Description |
+|---------|----------|-------------|
+| **API Gateway** | `https://localhost:8443/api` | Unified API access point |
+| **Web UI** | `http://localhost:8080` | Management dashboard |
+| **CA Service** | `https://localhost:8443/api/ca` | Certificate Authority operations |
+| **Device Manager** | `https://localhost:8443/api/devmanager` | Device management |
+| **KMS** | `https://localhost:8443/api/kms` | Key management |
+| **Alerts** | `https://localhost:8443/api/alerts` | Alert management |
+| **VA** | `https://localhost:8443/api/va` | Certificate validation |
+| **DMS Manager** | `https://localhost:8443/api/dmsmanager` | Device manufacturing |
+
+## Health Checks
+
+Verify service health:
+
+```bash
+curl -k https://localhost:8443/api/ca/v1/health
+curl -k https://localhost:8443/api/devmanager/v1/health
+curl -k https://localhost:8443/api/kms/v1/health
+```
+
+## Cleanup
+
+The launcher automatically cleans up Docker containers on `CTRL+C` or when the process exits. To manually remove all infrastructure containers:
+
+```bash
+docker ps -a --filter "label=group=lamassuiot-monolithic" -q | xargs docker rm -f
+```
+
+## Troubleshooting
+
+### Port Conflicts
+
+If ports 8080 or 8443 are already in use, modify the configuration in the source code or use a different deployment method.
+
+### Docker Socket Permission
+
+On Linux, ensure your user has access to the Docker socket:
+
+```bash
+sudo usermod -aG docker $USER
+# Log out and back in for changes to take effect
+```
+
+### Infrastructure Startup Failures
+
+Check Docker logs for the infrastructure containers:
+
+```bash
+docker logs $(docker ps --filter "label=group=lamassuiot-monolithic" -q)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Reference" icon="gear" href="/deployment/configuration">
+    Detailed environment variables and config options
+  </Card>
+  <Card title="API Documentation" icon="code" href="/api-reference/introduction">
+    Explore the REST API endpoints
+  </Card>
+</CardGroup>

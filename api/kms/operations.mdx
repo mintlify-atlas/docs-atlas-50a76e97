@@ -1,0 +1,347 @@
+---
+title: 'Cryptographic Operations'
+description: 'Sign messages and verify signatures using managed keys'
+---
+
+## Sign Message
+
+<api method="POST" endpoint="/keys/{id}/sign" />
+
+Sign a message or digest using the specified key.
+
+<ParamField path="id" type="string" required>
+  Key identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="algorithm" type="string" required>
+  Signature algorithm to use:
+  - `SHA256WithRSA` - RSA with SHA-256
+  - `SHA384WithRSA` - RSA with SHA-384
+  - `SHA512WithRSA` - RSA with SHA-512
+  - `SHA256WithECDSA` - ECDSA with SHA-256
+  - `SHA384WithECDSA` - ECDSA with SHA-384
+  - `SHA512WithECDSA` - ECDSA with SHA-512
+  - `Ed25519` - Ed25519 signature
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  Message to sign (base64 encoded)
+</ParamField>
+
+<ParamField body="message_type" type="string" required>
+  Type of message:
+  - `RAW` - Raw message (will be hashed by the KMS)
+  - `DIGEST` - Pre-computed message digest
+</ParamField>
+
+### Response
+
+<ResponseField name="signature" type="string">
+  Base64 encoded signature
+</ResponseField>
+
+### Example Request - Sign Raw Message
+
+```bash
+# Encode your message to base64
+MESSAGE=$(echo -n "Hello, World!" | base64)
+
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/key-123/sign" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "SHA256WithRSA",
+    "message": "'"$MESSAGE"'",
+    "message_type": "RAW"
+  }'
+```
+
+### Example Request - Sign Digest
+
+```bash
+# Compute SHA-256 digest and encode to base64
+DIGEST=$(echo -n "Hello, World!" | openssl dgst -sha256 -binary | base64)
+
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/key-123/sign" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "SHA256WithRSA",
+    "message": "'"$DIGEST"'",
+    "message_type": "DIGEST"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "signature": "c2lnbmF0dXJlIGRhdGEgaGVyZS4uLg=="
+}
+```
+
+---
+
+## Verify Signature
+
+<api method="POST" endpoint="/keys/{id}/verify" />
+
+Verify a signature against a message using the specified key.
+
+<ParamField path="id" type="string" required>
+  Key identifier (must contain the public key)
+</ParamField>
+
+### Request Body
+
+<ParamField body="algorithm" type="string" required>
+  Signature algorithm used (same values as Sign Message)
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  Original message (base64 encoded)
+</ParamField>
+
+<ParamField body="signature" type="string" required>
+  Signature to verify (base64 encoded)
+</ParamField>
+
+<ParamField body="message_type" type="string" required>
+  Type of message: `RAW` or `DIGEST`
+</ParamField>
+
+### Response
+
+<ResponseField name="valid" type="boolean">
+  Whether the signature is valid
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if validation failed (empty string if successful)
+</ResponseField>
+
+### Example Request
+
+```bash
+MESSAGE=$(echo -n "Hello, World!" | base64)
+SIGNATURE="c2lnbmF0dXJlIGRhdGEgaGVyZS4uLg=="
+
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/key-123/verify" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "SHA256WithRSA",
+    "message": "'"$MESSAGE"'",
+    "signature": "'"$SIGNATURE"'",
+    "message_type": "RAW"
+  }'
+```
+
+### Example Response - Valid Signature
+
+```json
+{
+  "valid": true,
+  "error": ""
+}
+```
+
+### Example Response - Invalid Signature
+
+```json
+{
+  "valid": false,
+  "error": "signature verification failed"
+}
+```
+
+---
+
+## Signature Algorithms by Key Type
+
+### RSA Keys
+
+Supported signature algorithms:
+- `SHA256WithRSA` - Recommended for most use cases
+- `SHA384WithRSA` - Higher security
+- `SHA512WithRSA` - Maximum security
+
+### ECDSA Keys
+
+Supported signature algorithms:
+- `SHA256WithECDSA` - For P-256 keys
+- `SHA384WithECDSA` - For P-384 keys
+- `SHA512WithECDSA` - For P-521 keys
+
+### Ed25519 Keys
+
+Supported signature algorithms:
+- `Ed25519` - Native Ed25519 signature (no separate hash algorithm needed)
+
+---
+
+## Common Use Cases
+
+### Certificate Signing
+
+```bash
+# Step 1: Create or obtain a CSR
+openssl req -new -key device.key -out device.csr
+
+# Step 2: Extract the CSR data to be signed
+CSR_DATA=$(openssl req -in device.csr -outform DER | base64 -w 0)
+
+# Step 3: Sign the CSR with your CA key
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/ca-key-123/sign" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "SHA256WithRSA",
+    "message": "'"$CSR_DATA"'",
+    "message_type": "RAW"
+  }'
+```
+
+### Firmware Signing
+
+```bash
+# Step 1: Compute SHA-256 digest of firmware
+FIRMWARE_DIGEST=$(sha256sum firmware.bin | awk '{print $1}' | xxd -r -p | base64 -w 0)
+
+# Step 2: Sign the digest
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/firmware-signing-key/sign" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "SHA256WithECDSA",
+    "message": "'"$FIRMWARE_DIGEST"'",
+    "message_type": "DIGEST"
+  }'
+```
+
+### Document Signing
+
+```bash
+# Sign a document
+DOCUMENT=$(cat document.pdf | base64 -w 0)
+
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/document-signing-key/sign" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "SHA256WithRSA",
+    "message": "'"$DOCUMENT"'",
+    "message_type": "RAW"
+  }'
+```
+
+### Signature Verification
+
+```bash
+# Verify a signature received from a device or external system
+MESSAGE=$(cat data.bin | base64 -w 0)
+SIGNATURE=$(cat signature.bin | base64 -w 0)
+
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/device-key-456/verify" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "SHA256WithECDSA",
+    "message": "'"$MESSAGE"'",
+    "signature": "'"$SIGNATURE"'",
+    "message_type": "RAW"
+  }'
+```
+
+---
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Choose Appropriate Hash Algorithm">
+    - **SHA-256**: Standard choice for most applications
+    - **SHA-384/512**: Use when security requirements demand higher resistance to collisions
+    - Match hash strength to key strength (e.g., SHA-256 for 2048-bit RSA, SHA-384 for 3072-bit RSA)
+  </Accordion>
+
+  <Accordion title="RAW vs DIGEST Message Type">
+    - **RAW**: Use when you want the KMS to handle hashing. Simpler and less error-prone.
+    - **DIGEST**: Use when:
+      - You're signing very large data (hash locally to reduce network transfer)
+      - You need to match existing signature formats
+      - You're implementing specific protocols that require pre-hashing
+  </Accordion>
+
+  <Accordion title="Signature Verification">
+    - Always verify signatures using the same algorithm used for signing
+    - Ensure message encoding (base64) is consistent between signing and verification
+    - For certificate validation, verify the entire chain, not just the leaf certificate
+  </Accordion>
+
+  <Accordion title="Performance Optimization">
+    - For large files, compute the digest locally and use `message_type: "DIGEST"`
+    - Cache public keys for verification to avoid repeated API calls
+    - Consider batching signature operations when possible
+  </Accordion>
+
+  <Accordion title="Security Considerations">
+    - Never expose private keys - always use KMS operations
+    - Rotate signing keys according to your security policy
+    - Use HSM-backed engines (AWS KMS, Vault, PKCS#11) for critical signing operations
+    - Implement proper access controls on signing keys
+    - Log all signing operations for audit purposes
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Error Handling
+
+Common errors when performing cryptographic operations:
+
+### Invalid Key ID
+
+```json
+{
+  "err": "Key not found"
+}
+```
+
+**Solution**: Verify the key ID exists using `GET /keys/{id}`
+
+### Algorithm Mismatch
+
+```json
+{
+  "err": "Algorithm not supported for this key type"
+}
+```
+
+**Solution**: Use a compatible algorithm for your key type (e.g., `SHA256WithRSA` for RSA keys, `SHA256WithECDSA` for ECDSA keys)
+
+### Invalid Message Format
+
+```json
+{
+  "err": "Invalid base64 encoding"
+}
+```
+
+**Solution**: Ensure your message and signature are properly base64 encoded
+
+### Signature Verification Failed
+
+```json
+{
+  "valid": false,
+  "error": "signature verification failed"
+}
+```
+
+**Possible causes**:
+- Wrong message or signature
+- Algorithm mismatch
+- Message encoding issue
+- Corrupted signature data

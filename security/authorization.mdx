@@ -1,0 +1,410 @@
+---
+title: Authorization
+description: Access control and authorization in Lamassu IoT
+---
+
+Lamassu IoT implements authorization controls to manage access to resources and operations across the platform. This page describes the authorization model and how to configure access control.
+
+## Authorization Model
+
+Lamassu's authorization system operates at multiple levels:
+
+### API-Level Authorization
+
+Each service endpoint validates that the authenticated identity has permission to perform the requested operation.
+
+**Key concepts:**
+- **Authentication first:** Authorization decisions are made after identity is established (via JWT, mTLS, etc.)
+- **Resource-based:** Access is controlled per resource type (CAs, certificates, devices, DMSs, etc.)
+- **Operation-based:** Different operations (read, write, delete) have different permission requirements
+
+### DMS-Level Authorization
+
+The Device Management Service (DMS) controls which devices can enroll and which CAs can issue certificates.
+
+**Authorization points:**
+- **Enrollment authorization:** Which bootstrap certificates are trusted for enrollment
+- **CA authorization:** Which CAs are allowed to issue certificates via this DMS
+- **Webhook authorization:** External validation of enrollment requests
+
+## Security Schemes
+
+Lamassu APIs use the following security schemes defined in OpenAPI specifications:
+
+### Bearer Authentication
+
+All REST APIs support JWT bearer token authentication:
+
+```yaml
+securitySchemes:
+  BearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+    description: JWT token authentication
+
+security:
+  - BearerAuth: []
+```
+
+**Usage example:**
+```bash
+curl -H "Authorization: Bearer eyJhbGc..." \
+  https://lamassu.example.com/api/ca/v1/cas
+```
+
+### Client Certificate Authentication
+
+For EST operations and device communication:
+
+```yaml
+securitySchemes:
+  ClientCertificate:
+    type: mutualTLS
+    description: Client certificate authentication for EST operations
+```
+
+## Resource-Level Access Control
+
+Lamassu services implement access control at the resource level:
+
+### Certificate Authority (CA) Access
+
+**Operations:**
+- `GET /cas` - List certificate authorities
+- `POST /cas` - Create new CA
+- `GET /cas/{id}` - Get CA details
+- `DELETE /cas/{id}` - Delete CA
+- `POST /cas/{id}/sign` - Sign data with CA key
+
+**Authorization considerations:**
+- CA creation may require elevated privileges
+- CA deletion should be restricted to administrators
+- Signing operations require specific CA access
+
+### Device Management Access
+
+**Operations:**
+- `GET /devices` - List devices
+- `POST /devices` - Create device
+- `GET /devices/{id}` - Get device details  
+- `PATCH /devices/{id}` - Update device metadata
+- `DELETE /devices/{id}` - Decommission device
+
+**Authorization considerations:**
+- Device creation may be restricted to provisioning services
+- Metadata updates may require ownership validation
+- Decommissioning should be audited and restricted
+
+### DMS Management Access
+
+**Operations:**
+- `GET /dms` - List DMS instances
+- `POST /dms` - Create DMS
+- `GET /dms/{id}` - Get DMS configuration
+- `PATCH /dms/{id}` - Update DMS settings
+- `DELETE /dms/{id}` - Delete DMS
+
+**Authorization considerations:**
+- DMS creation requires platform administrator privileges
+- DMS configuration changes affect enrollment policies
+- Validation CA list changes impact trust boundaries
+
+## DMS Authorization Configuration
+
+### Validation CA Configuration
+
+The DMS validates client certificates against a list of trusted CAs during EST enrollment:
+
+```json
+{
+  "id": "production-dms",
+  "settings": {
+    "enrollment_settings": {
+      "protocol": "EST",
+      "est_rfc7030_settings": {
+        "authentication": {
+          "type": "client_certificate",
+          "client_certificate": {
+            "validation_cas": [
+              "bootstrap-ca-id",
+              "manufacturing-ca-id"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+<Warning>
+Only include trusted CAs in the `validation_cas` list. Any certificate issued by these CAs can authenticate enrollment requests.
+</Warning>
+
+### Issuance CA Authorization
+
+Configure which CAs are authorized to issue certificates through a DMS:
+
+```json
+{
+  "id": "iot-dms",
+  "settings": {
+    "enrollment_settings": {
+      "enable_replace_allow_expired": false,
+      "device_provisioning_profile_id": "iot-profile-id",
+      "registration_mode": "JITP",
+      "ca_distribution_mode": "MANAGED"
+    }
+  }
+}
+```
+
+The issuance CA is determined by the device provisioning profile associated with the DMS.
+
+### Webhook Authorization
+
+For advanced authorization logic, configure webhook-based validation:
+
+```json
+{
+  "authentication": {
+    "type": "webhook",
+    "webhook": {
+      "url": "https://authz.example.com/validate-enrollment",
+      "headers": {
+        "Authorization": "Bearer <api-key>"
+      },
+      "timeout_seconds": 5
+    }
+  }
+}
+```
+
+**Webhook request format:**
+```json
+{
+  "csr": "<base64-encoded CSR>",
+  "client_certificate": "<PEM certificate if mTLS>",
+  "dms_id": "production-dms"
+}
+```
+
+**Expected response:**
+```json
+{
+  "authorized": true,
+  "reason": "Device in approved inventory"
+}
+```
+
+## JWT Claims and Authorization
+
+When using JWT authentication, authorization decisions can be based on token claims:
+
+### Standard Claims
+
+```json
+{
+  "sub": "user@example.com",
+  "iss": "https://idp.example.com",
+  "aud": "lamassu-api",
+  "exp": 1735689600,
+  "iat": 1735686000,
+  "roles": ["admin", "ca-operator"],
+  "permissions": ["ca:create", "ca:delete", "device:read"]
+}
+```
+
+### Role-Based Access
+
+Implement RBAC by mapping JWT roles to allowed operations:
+
+| Role | Permissions |
+|------|-------------|
+| `viewer` | Read-only access to all resources |
+| `operator` | Read/write devices, read CAs |
+| `ca-operator` | Full CA management, certificate issuance |
+| `admin` | Full platform access, DMS management |
+
+<Tip>
+Define roles in your identity provider and include them in the `roles` claim. Lamassu services can extract and validate these claims.
+</Tip>
+
+## Audit and Compliance
+
+### Authorization Events
+
+Lamassu logs authorization decisions for audit purposes:
+
+**Successful authorization:**
+```json
+{
+  "timestamp": "2025-03-09T10:15:30Z",
+  "event": "authorization.success",
+  "identity": "user@example.com",
+  "resource": "ca:production-ca-01",
+  "operation": "sign",
+  "result": "allowed"
+}
+```
+
+**Failed authorization:**
+```json
+{
+  "timestamp": "2025-03-09T10:16:45Z",
+  "event": "authorization.failure",
+  "identity": "device-12345",
+  "resource": "dms:restricted-dms",
+  "operation": "enroll",
+  "result": "denied",
+  "reason": "client certificate not in validation CA list"
+}
+```
+
+### Compliance Considerations
+
+<CardGroup cols={2}>
+  <Card title="Principle of Least Privilege" icon="user-lock">
+    Grant minimum permissions necessary for each identity. Regularly review and revoke unnecessary access.
+  </Card>
+  
+  <Card title="Separation of Duties" icon="users">
+    Separate CA creation, certificate issuance, and device provisioning roles.
+  </Card>
+  
+  <Card title="Audit Trail" icon="clipboard-list">
+    Enable comprehensive logging of authorization decisions for compliance and forensic analysis.
+  </Card>
+  
+  <Card title="Regular Access Reviews" icon="calendar-check">
+    Periodically review authorization configurations, especially DMS validation CA lists.
+  </Card>
+</CardGroup>
+
+## Authorization Best Practices
+
+### 1. Implement Defense in Depth
+
+Combine multiple authorization layers:
+- Network-level controls (firewall, VPC)
+- Transport-level security (mTLS)
+- Application-level authorization (JWT, RBAC)
+- Resource-level validation (DMS CA lists)
+
+### 2. Restrict DMS Creation
+
+Tightly control who can create and configure DMS instances:
+```json
+{
+  "required_role": "platform-admin",
+  "approval_required": true,
+  "audit_all_changes": true
+}
+```
+
+### 3. Limit CA Operations
+
+Restrict CA creation and signing operations:
+- Require multi-factor authentication for CA creation
+- Implement approval workflows for new CAs
+- Separate signing keys from management operations
+- Use HSMs for production CA private keys
+
+### 4. Monitor Authorization Failures
+
+Alert on repeated authorization failures:
+```bash
+# Example: Monitor for repeated enrollment failures
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://lamassu.example.com/api/alerts/v1/subscriptions" \
+  -d '{
+    "event_type": "authorization.failure",
+    "conditions": {
+      "count_threshold": 5,
+      "time_window_minutes": 10
+    },
+    "notification_channel": "security-team"
+  }'
+```
+
+## Troubleshooting Authorization Issues
+
+### Problem: Device enrollment rejected
+
+**Symptoms:**
+- HTTP 401 or 403 during EST enrollment
+- "Client certificate not trusted" errors
+
+**Resolution steps:**
+
+1. **Verify client certificate chain:**
+   ```bash
+   openssl verify -CAfile trusted-ca.pem client.crt
+   ```
+
+2. **Check DMS validation CA list:**
+   ```bash
+   curl -H "Authorization: Bearer $TOKEN" \
+     https://lamassu.example.com/api/dmsmanager/v1/dms/{dms-id}
+   ```
+
+3. **Confirm certificate issuer matches validation CA:**
+   ```bash
+   openssl x509 -in client.crt -noout -issuer
+   ```
+
+### Problem: API requests return 403 Forbidden
+
+**Symptoms:**
+- Authenticated but cannot access resource
+- Missing permissions in JWT
+
+**Resolution steps:**
+
+1. **Decode and inspect JWT claims:**
+   ```bash
+   echo $TOKEN | cut -d. -f2 | base64 -d | jq
+   ```
+
+2. **Verify required roles/permissions are present**
+
+3. **Check token expiration:**
+   ```bash
+   echo $TOKEN | cut -d. -f2 | base64 -d | jq .exp
+   date -d @$(echo $TOKEN | cut -d. -f2 | base64 -d | jq -r .exp)
+   ```
+
+4. **Review service authorization configuration**
+
+### Problem: Webhook authorization timing out
+
+**Symptoms:**
+- Enrollment requests take >5 seconds
+- Webhook timeout errors in logs
+
+**Resolution steps:**
+
+1. **Test webhook endpoint directly:**
+   ```bash
+   curl -v -X POST https://authz.example.com/validate-enrollment \
+     -H "Content-Type: application/json" \
+     -d '{"dms_id":"test", "csr":"...."}'
+   ```
+
+2. **Increase timeout if necessary:**
+   ```json
+   {
+     "webhook": {
+       "timeout_seconds": 10
+     }
+   }
+   ```
+
+3. **Implement webhook caching if applicable**
+
+## Related Topics
+
+- [Authentication](/security/authentication) - Identity verification methods
+- [Security Best Practices](/security/best-practices) - Security hardening guide
+- [Device Management](/core-concepts/devices) - Device lifecycle operations

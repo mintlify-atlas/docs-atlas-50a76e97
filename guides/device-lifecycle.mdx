@@ -1,0 +1,372 @@
+---
+title: Device Lifecycle Management
+description: Register, enroll, and manage IoT devices in Lamassu
+---
+
+This guide covers the complete lifecycle of IoT devices in Lamassu, from initial registration through enrollment, certificate renewal, and decommissioning.
+
+## Register a Device
+
+Device registration creates an inventory entry before identity enrollment.
+
+<Steps>
+  <Step title="Create device entry">
+    Register a device with a unique ID and assign it to a DMS:
+
+    ```bash
+    curl -X POST https://lamassu.example.com/api/devmanager/v1/devices \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "id": "device-001",
+        "dms_id": "manufacturing-dms",
+        "tags": ["sensor", "production"],
+        "metadata": {
+          "location": "factory-floor-3",
+          "model": "TH-2000",
+          "serial_number": "SN123456789"
+        }
+      }'
+    ```
+
+    Response:
+    ```json
+    {
+      "id": "device-001",
+      "dms_owner": "manufacturing-dms",
+      "status": "NO_IDENTITY",
+      "creation_timestamp": "2026-03-09T10:00:00Z",
+      "tags": ["sensor", "production"],
+      "metadata": {
+        "location": "factory-floor-3",
+        "model": "TH-2000",
+        "serial_number": "SN123456789"
+      },
+      "identity_slot": null
+    }
+    ```
+  </Step>
+
+  <Step title="Verify registration">
+    Retrieve the device to confirm creation:
+
+    ```bash
+    curl https://lamassu.example.com/api/devmanager/v1/devices/device-001 \
+      -H "Authorization: Bearer $TOKEN"
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  New devices start with status `NO_IDENTITY` until they are enrolled with a certificate.
+</Note>
+
+## Enroll Device with Certificate
+
+Devices receive their identity by enrolling with a certificate. This can be done through EST enrollment (see [EST Enrollment Guide](/guides/est-enrollment)) or direct API binding.
+
+### Direct Certificate Binding
+
+Bind an existing certificate to a device's identity slot.
+
+<Steps>
+  <Step title="Obtain a certificate">
+    First, issue a certificate for the device:
+
+    ```bash
+    # Generate CSR
+    openssl req -new -key device-001.key -out device-001.csr \
+      -subj "/CN=device-001/O=Acme Corp"
+
+    # Convert to Base64 DER
+    openssl req -in device-001.csr -outform DER | base64 -w 0 > device-001.csr.b64
+
+    # Submit CSR to CA
+    curl -X POST https://lamassu.example.com/api/ca/v1/cas/issuing-ca-01/sign \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "csr": "'$(cat device-001.csr.b64)'",
+        "profile_id": "device-profile"
+      }' > device-cert.json
+    ```
+  </Step>
+
+  <Step title="Bind certificate to device">
+    Use the DMS Manager to bind the issued certificate to the device:
+
+    ```bash
+    curl -X POST https://lamassu.example.com/api/dmsmanager/v1/dms/bind-identity \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "device_id": "device-001",
+        "certificate_serial_number": "1a2b3c4d5e6f"
+      }'
+    ```
+  </Step>
+
+  <Step title="Verify device status">
+    The device status should now be `ACTIVE`:
+
+    ```bash
+    curl https://lamassu.example.com/api/devmanager/v1/devices/device-001 \
+      -H "Authorization: Bearer $TOKEN" \
+      | jq '.status'
+    ```
+  </Step>
+</Steps>
+
+## List and Filter Devices
+
+Query the device inventory with powerful filtering capabilities.
+
+<CodeGroup>
+```bash All devices
+curl "https://lamassu.example.com/api/devmanager/v1/devices?page_size=50" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by DMS
+curl "https://lamassu.example.com/api/devmanager/v1/devices/dms/manufacturing-dms" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by status
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=status[eq]=ACTIVE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by tags
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=tags[ct]=production" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by location (metadata)
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=metadata[jsonpath]$.location%20==%20%22factory-floor-3%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by creation date
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=creation_timestamp[af]=2026-01-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Sort by creation date
+curl "https://lamassu.example.com/api/devmanager/v1/devices?sort_by=creation_timestamp&sort_mode=desc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+</CodeGroup>
+
+## Update Device Metadata
+
+Modify device metadata using JSON Patch operations.
+
+<Steps>
+  <Step title="Prepare metadata updates">
+    Create JSON Patch operations:
+
+    ```json
+    {
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/location",
+          "value": "warehouse-2"
+        },
+        {
+          "op": "add",
+          "path": "/firmware_version",
+          "value": "v2.1.0"
+        }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Apply updates">
+    Use `PUT` to replace or `PATCH` to merge:
+
+    <CodeGroup>
+    ```bash PUT (replace all)
+    curl -X PUT https://lamassu.example.com/api/devmanager/v1/devices/device-001/metadata \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @metadata-patch.json
+    ```
+
+    ```bash PATCH (merge)
+    curl -X PATCH https://lamassu.example.com/api/devmanager/v1/devices/device-001/metadata \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @metadata-patch.json
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Update Device Identity Slot
+
+Manually update the certificate in a device's identity slot.
+
+```bash
+curl -X PUT https://lamassu.example.com/api/devmanager/v1/devices/device-001/idslot \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "certificate_serial_number": "new-cert-serial"
+  }'
+```
+
+<Warning>
+  Updating the identity slot will revoke the previous certificate if the device had one.
+</Warning>
+
+## Monitor Device Certificate Status
+
+Devices automatically transition through lifecycle states based on their certificate validity:
+
+| Status | Description |
+|--------|-------------|
+| `NO_IDENTITY` | Device registered but no certificate assigned |
+| `ACTIVE` | Certificate is valid and not approaching expiration |
+| `RENEWAL_WINDOW` | Certificate is within the renewal window |
+| `ABOUT_TO_EXPIRE` | Certificate expires very soon |
+| `EXPIRED` | Certificate has expired |
+| `REVOKED` | Certificate has been revoked |
+| `DECOMMISSIONED` | Device has been removed from service |
+
+### Check devices approaching expiration
+
+```bash
+curl "https://lamassu.example.com/api/devmanager/v1/devices?filter=status[eq]=ABOUT_TO_EXPIRE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### View device statistics
+
+Get aggregate device counts and status distribution:
+
+```bash
+curl https://lamassu.example.com/api/devmanager/v1/stats \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Response:
+```json
+{
+  "total": 1500,
+  "status_distribution": {
+    "ACTIVE": 1200,
+    "RENEWAL_WINDOW": 150,
+    "ABOUT_TO_EXPIRE": 50,
+    "EXPIRED": 30,
+    "REVOKED": 20,
+    "NO_IDENTITY": 50
+  }
+}
+```
+
+## Decommission a Device
+
+Remove a device from active service. This revokes its certificate and marks it as decommissioned.
+
+<Steps>
+  <Step title="Decommission the device">
+    ```bash
+    curl -X DELETE https://lamassu.example.com/api/devmanager/v1/devices/device-001/decommission \
+      -H "Authorization: Bearer $TOKEN"
+    ```
+
+    The device status changes to `DECOMMISSIONED` and its certificate is revoked.
+  </Step>
+
+  <Step title="Verify decommissioning">
+    ```bash
+    curl https://lamassu.example.com/api/devmanager/v1/devices/device-001 \
+      -H "Authorization: Bearer $TOKEN" \
+      | jq '{status: .status, identity_slot: .identity_slot}'
+    ```
+  </Step>
+</Steps>
+
+## Delete a Device
+
+Permanently remove a device from inventory.
+
+<Warning>
+  Device deletion is **irreversible**. The device record and all associated metadata will be permanently removed.
+</Warning>
+
+```bash
+curl -X DELETE https://lamassu.example.com/api/devmanager/v1/devices/device-001 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Device Groups
+
+Organize devices into dynamic groups based on filtering criteria.
+
+### Create a device group
+
+```bash
+curl -X POST https://lamassu.example.com/api/devmanager/v1/device-groups \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production Sensors",
+    "description": "All production environment sensors",
+    "criteria": [
+      {
+        "field": "tags",
+        "operand": "contains",
+        "value": "production"
+      },
+      {
+        "field": "tags",
+        "operand": "contains",
+        "value": "sensor"
+      }
+    ]
+  }'
+```
+
+### List device groups
+
+```bash
+curl https://lamassu.example.com/api/devmanager/v1/device-groups \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Device groups automatically update as devices are added or modified to match the criteria.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use meaningful device IDs">
+    Choose device IDs that are human-readable and correspond to physical asset identifiers (serial numbers, MAC addresses, etc.).
+  </Accordion>
+
+  <Accordion title="Tag devices for organization">
+    Use tags to categorize devices by environment (`production`, `staging`), type (`sensor`, `gateway`), or location.
+  </Accordion>
+
+  <Accordion title="Monitor certificate lifecycle">
+    Regularly query devices in `RENEWAL_WINDOW` or `ABOUT_TO_EXPIRE` status to proactively renew certificates.
+  </Accordion>
+
+  <Accordion title="Leverage metadata for business logic">
+    Store application-specific data in metadata fields for filtering, reporting, and automation.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="EST Enrollment" icon="certificate" href="/guides/est-enrollment">
+    Automate device enrollment with EST
+  </Card>
+  <Card title="Filtering & Sorting" icon="filter" href="/guides/filtering-sorting">
+    Advanced device queries with JSONPath
+  </Card>
+</CardGroup>

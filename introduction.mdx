@@ -1,0 +1,111 @@
+---
+title: Introduction
+description: IoT-first PKI platform for industrial environments with automated certificate lifecycle management and cloud/edge integration
+---
+
+# Lamassu IoT
+
+Lamassu IoT is an IoT-first public key infrastructure (PKI) platform built for industrial environments, enabling secure device identities, automated certificate lifecycles, and integration with cloud and edge ecosystems.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running with Lamassu in minutes
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand the system architecture
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the REST APIs
+  </Card>
+  <Card title="Deployment" icon="server" href="/deployment/overview">
+    Deploy to production environments
+  </Card>
+</CardGroup>
+
+## Why Lamassu IoT?
+
+Lamassu provides industrial-grade PKI capabilities designed specifically for IoT deployments at scale.
+
+### Industrial-Grade Security
+
+Hardware-backed key storage, hardened crypto engines, and auditable certificate workflows ensure your IoT infrastructure meets the highest security standards.
+
+### Cloud & Edge Ready
+
+Pluggable storage, event bus, and crypto layers support AWS, Vault, on-premises, and hybrid setups. Deploy where you need it.
+
+### Operational Automation
+
+Device onboarding, policy management, and renewal flows are designed for large IoT fleets. Automate certificate lifecycle operations end-to-end.
+
+### Developer Friendly
+
+SDKs, connectors, and well-defined APIs accelerate integrations with existing platforms and infrastructure.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Certificate Authority Management" icon="certificate">
+    Create and manage CAs with flexible issuance profiles and policies
+  </Card>
+  <Card title="Device Identity Management" icon="microchip">
+    Track device lifecycles, identities, and certificate bindings
+  </Card>
+  <Card title="EST Protocol Support" icon="shield-check">
+    RFC 7030 enrollment for automated device certificate provisioning
+  </Card>
+  <Card title="Key Management Service" icon="key">
+    Pluggable crypto engines supporting Software, AWS KMS, PKCS#11, and Vault
+  </Card>
+  <Card title="Advanced Filtering" icon="filter">
+    JSONPath-based filtering and sorting across all resources
+  </Card>
+  <Card title="Cloud Connectors" icon="cloud">
+    Native integration with AWS IoT and other cloud platforms
+  </Card>
+</CardGroup>
+
+## Architecture Overview
+
+Lamassu follows a microservices architecture with pluggable components:
+
+- **Backend Services** — CA, Device Manager, DMS Manager, KMS, Alerts, Validation Authority
+- **Crypto Engines** — Software, AWS KMS, PKCS#11, HashiCorp Vault
+- **Storage** — PostgreSQL with JSONB support for metadata
+- **Event Bus** — AMQP (RabbitMQ) or AWS EventBridge
+- **Connectors** — AWS IoT, extensible for custom integrations
+
+All services expose RESTful APIs with OpenAPI specifications.
+
+## Quick Links
+
+<CardGroup cols={3}>
+  <Card title="Managing CAs" icon="building-shield" href="/guides/managing-cas">
+    Create and configure Certificate Authorities
+  </Card>
+  <Card title="Device Lifecycle" icon="arrows-rotate" href="/guides/device-lifecycle">
+    Manage device registration and enrollment
+  </Card>
+  <Card title="EST Enrollment" icon="mobile" href="/guides/est-enrollment">
+    Set up automated device enrollment
+  </Card>
+  <Card title="Crypto Engines" icon="lock" href="/engines/crypto-engines">
+    Configure pluggable crypto backends
+  </Card>
+  <Card title="Security" icon="shield" href="/security/best-practices">
+    Security best practices and hardening
+  </Card>
+  <Card title="Go SDK" icon="code" href="/sdk/overview">
+    Integrate with the Go SDK
+  </Card>
+</CardGroup>
+
+## Community & Support
+
+- **Documentation**: [https://www.lamassu.io/docs/](https://www.lamassu.io/docs/)
+- **GitHub Issues**: [github.com/lamassuiot/lamassuiot/issues](https://github.com/lamassuiot/lamassuiot/issues)
+- **GitHub Discussions**: [github.com/lamassuiot/lamassuiot/discussions](https://github.com/lamassuiot/lamassuiot/discussions)
+
+## License
+
+Lamassu IoT is licensed under the [Mozilla Public License Version 2.0](https://github.com/lamassuiot/lamassuiot/blob/main/LICENSE).

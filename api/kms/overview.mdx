@@ -1,0 +1,141 @@
+---
+title: 'Key Management API Overview'
+description: 'Cryptographic key lifecycle management and operations for Lamassu IoT Platform'
+---
+
+## Introduction
+
+The Key Management Service (KMS) API provides comprehensive cryptographic key lifecycle management for the Lamassu IoT Platform. It enables secure creation, storage, and usage of cryptographic keys across multiple crypto engines.
+
+## Base URL
+
+```
+/api/kms/v1
+```
+
+## Authentication
+
+All KMS API endpoints require Bearer token authentication using JWT tokens.
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  https://your-domain.com/api/kms/v1/keys
+```
+
+## API Groups
+
+The KMS API is organized into three main groups:
+
+### Crypto Engines
+
+Manage and retrieve information about configured crypto engine providers that store and manage cryptographic keys.
+
+### Key Lifecycle Management
+
+Complete key lifecycle operations:
+- Create new cryptographic keys
+- Import existing keys
+- Retrieve key information
+- Update key metadata, names, tags, and aliases
+- Delete keys
+
+### Cryptographic Operations
+
+Perform cryptographic operations using managed keys:
+- Sign messages and data
+- Verify signatures
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Engine Support" icon="layer-group">
+    Support for multiple crypto engines including software (Golang), AWS KMS, HashiCorp Vault, and more
+  </Card>
+  <Card title="Algorithm Flexibility" icon="key">
+    Support for RSA, ECDSA, and Ed25519 algorithms with configurable key sizes
+  </Card>
+  <Card title="Key Import" icon="file-import">
+    Import existing private keys from external sources into the KMS
+  </Card>
+  <Card title="Rich Metadata" icon="tags">
+    Organize keys with names, aliases, tags, and custom metadata for easy management
+  </Card>
+</CardGroup>
+
+## Supported Algorithms
+
+The KMS supports the following cryptographic algorithms:
+
+- **RSA** - 2048, 3072, 4096 bits
+- **ECDSA** - P-256, P-384, P-521 curves
+- **Ed25519** - Edwards-curve Digital Signature Algorithm
+
+## Key Organization
+
+Keys can be organized and filtered using:
+
+- **Name** - Human-readable identifier
+- **Aliases** - Alternative names for the same key
+- **Tags** - Labels for categorization (e.g., `production`, `signing`, `encryption`)
+- **Metadata** - Custom key-value pairs for additional context
+- **Engine ID** - Crypto engine managing the key
+
+## Common Use Cases
+
+### Certificate Authority Keys
+
+Create and manage keys for Certificate Authorities to sign certificates:
+
+```bash
+POST /keys
+{
+  "algorithm": "RSA",
+  "size": 4096,
+  "engine_id": "vault-prod",
+  "name": "ca-root-key",
+  "tags": ["ca", "root", "production"]
+}
+```
+
+### Device Signing Keys
+
+Create keys for signing device firmware or data:
+
+```bash
+POST /keys
+{
+  "algorithm": "ECDSA",
+  "size": 256,
+  "engine_id": "aws-kms-prod",
+  "name": "firmware-signing-key",
+  "tags": ["signing", "firmware"]
+}
+```
+
+### Key Import
+
+Import existing keys from legacy systems:
+
+```bash
+POST /keys/import
+{
+  "private_key": "LS0tLS1CRUdJTi...",
+  "engine_id": "golang",
+  "name": "imported-legacy-key",
+  "tags": ["imported", "legacy"]
+}
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Crypto Engines" icon="server" href="/api/kms/engines">
+    Learn about crypto engine management
+  </Card>
+  <Card title="Key Operations" icon="key" href="/api/kms/keys">
+    Explore key lifecycle operations
+  </Card>
+  <Card title="Sign & Verify" icon="signature" href="/api/kms/operations">
+    Perform cryptographic operations
+  </Card>
+</CardGroup>

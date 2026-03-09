@@ -1,0 +1,429 @@
+---
+title: 'DMS Operations'
+description: 'Create, read, update, and delete Device Management Service instances'
+---
+
+## Get DMS Statistics
+
+<api method="GET" endpoint="/v1/stats" />
+
+Retrieve statistics about DMS instances with optional filtering.
+
+<ParamField query="filter" type="string">
+  Filter expression to get statistics for specific DMS instances (e.g., `name[eq]production`, `metadata.region[eq]us-east-1`)
+</ParamField>
+
+### Response
+
+<ResponseField name="total" type="integer">
+  Total number of DMS instances matching the filter
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/dmsmanager/v1/v1/stats?filter=name[contains]prod" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "total": 42
+}
+```
+
+---
+
+## List DMS Instances
+
+<api method="GET" endpoint="/v1/dms" />
+
+Retrieve a paginated list of all DMS instances.
+
+### Query Parameters
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Bookmark for pagination to retrieve the next page
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field name to sort by (e.g., `name`, `creation_ts`)
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression for DMS instances
+</ParamField>
+
+### Response
+
+<ResponseField name="next" type="string">
+  Bookmark for the next page of results
+</ResponseField>
+
+<ResponseField name="list" type="array">
+  Array of DMS objects
+  <Expandable title="DMS Object">
+    <ResponseField name="id" type="string">
+      DMS unique identifier
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Human-readable name
+    </ResponseField>
+    <ResponseField name="metadata" type="object">
+      Custom metadata key-value pairs
+    </ResponseField>
+    <ResponseField name="creation_ts" type="string" format="date-time">
+      Creation timestamp
+    </ResponseField>
+    <ResponseField name="settings" type="object">
+      DMS configuration settings including enrollment, re-enrollment, and CA distribution settings
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/dmsmanager/v1/v1/dms?page_size=10&sort_by=name&sort_mode=asc" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Create DMS
+
+<api method="POST" endpoint="/v1/dms" />
+
+Create a new DMS instance with enrollment configuration.
+
+### Request Body
+
+<ParamField body="id" type="string">
+  Unique identifier for the DMS (optional, will be generated if not provided)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Human-readable name for the DMS
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Custom metadata key-value pairs
+</ParamField>
+
+<ParamField body="settings" type="object" required>
+  DMS configuration settings
+  <Expandable title="Settings Object">
+    <ParamField body="settings.issuance_profile_id" type="string">
+      ID of the issuance profile to use for certificate generation
+    </ParamField>
+    <ParamField body="settings.enrollment_settings" type="object">
+      Configuration for device enrollment
+      <Expandable title="Enrollment Settings">
+        <ParamField body="protocol" type="string">
+          Enrollment protocol: `EST_RFC7030`
+        </ParamField>
+        <ParamField body="enrollment_ca" type="string">
+          CA identifier for enrollment certificates
+        </ParamField>
+        <ParamField body="registration_mode" type="string">
+          Registration mode: `JITP` (Just-In-Time Provisioning) or `PRE_REGISTRATION`
+        </ParamField>
+        <ParamField body="verify_csr_signature" type="boolean">
+          Whether to verify CSR signature
+        </ParamField>
+        <ParamField body="enable_replaceable_enrollment" type="boolean">
+          Allow enrollment certificate replacement
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="settings.reenrollment_settings" type="object">
+      Configuration for certificate re-enrollment
+      <Expandable title="Re-enrollment Settings">
+        <ParamField body="reenrollment_delta" type="string">
+          Time window before expiration when re-enrollment is allowed
+        </ParamField>
+        <ParamField body="preventive_delta" type="string">
+          Preventive re-enrollment window
+        </ParamField>
+        <ParamField body="critical_delta" type="string">
+          Critical re-enrollment window
+        </ParamField>
+        <ParamField body="enable_expired_renewal" type="boolean">
+          Allow renewal of expired certificates
+        </ParamField>
+        <ParamField body="revoke_on_reenrollment" type="boolean">
+          Revoke old certificate when re-enrolling
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="settings.server_keygen_settings" type="object">
+      Server-side key generation configuration
+      <Expandable title="Server KeyGen Settings">
+        <ParamField body="enabled" type="boolean">
+          Enable server-side key generation
+        </ParamField>
+        <ParamField body="key.type" type="string">
+          Key algorithm type (e.g., `RSA`, `ECDSA`)
+        </ParamField>
+        <ParamField body="key.bits" type="integer">
+          Key size in bits
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    <ParamField body="settings.ca_distribution_settings" type="object">
+      CA certificate distribution configuration
+      <Expandable title="CA Distribution Settings">
+        <ParamField body="include_system_ca" type="boolean">
+          Include system CA certificates
+        </ParamField>
+        <ParamField body="include_enrollment_ca" type="boolean">
+          Include enrollment CA certificate
+        </ParamField>
+        <ParamField body="managed_cas" type="array">
+          Array of CA identifiers to include
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+Returns the created DMS object with all settings and generated ID.
+
+### Example Request
+
+```bash
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/v1/dms" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production DMS",
+    "metadata": {
+      "region": "us-east-1",
+      "environment": "production"
+    },
+    "settings": {
+      "issuance_profile_id": "profile-123",
+      "enrollment_settings": {
+        "protocol": "EST_RFC7030",
+        "enrollment_ca": "ca-1",
+        "registration_mode": "JITP",
+        "verify_csr_signature": true,
+        "enable_replaceable_enrollment": false
+      },
+      "reenrollment_settings": {
+        "reenrollment_delta": "720h",
+        "enable_expired_renewal": false,
+        "revoke_on_reenrollment": true
+      },
+      "server_keygen_settings": {
+        "enabled": false
+      },
+      "ca_distribution_settings": {
+        "include_system_ca": true,
+        "include_enrollment_ca": true,
+        "managed_cas": []
+      }
+    }
+  }'
+```
+
+---
+
+## Get DMS by ID
+
+<api method="GET" endpoint="/v1/dms/{id}" />
+
+Retrieve detailed information about a specific DMS instance.
+
+<ParamField path="id" type="string" required>
+  DMS identifier
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/dmsmanager/v1/v1/dms/dms-123" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Update DMS
+
+<api method="PUT" endpoint="/v1/dms/{id}" />
+
+Update an existing DMS instance. This replaces the entire DMS configuration.
+
+<ParamField path="id" type="string" required>
+  DMS identifier
+</ParamField>
+
+### Request Body
+
+Same structure as Create DMS. All settings will be replaced.
+
+### Example Request
+
+```bash
+curl -X PUT "https://api.lamassu.io/api/dmsmanager/v1/v1/dms/dms-123" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Updated Production DMS",
+    "settings": { ... }
+  }'
+```
+
+---
+
+## Delete DMS
+
+<api method="DELETE" endpoint="/v1/dms/{id}" />
+
+Delete a DMS instance.
+
+<ParamField path="id" type="string" required>
+  DMS identifier
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X DELETE "https://api.lamassu.io/api/dmsmanager/v1/v1/dms/dms-123" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Response
+
+Returns `204 No Content` on success.
+
+---
+
+## Update DMS Metadata
+
+<api method="PUT" endpoint="/v1/dms/{id}/metadata" />
+
+Replace all metadata for a DMS instance using JSON Patch operations.
+
+<ParamField path="id" type="string" required>
+  DMS identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="patches" type="array" required>
+  Array of JSON Patch operations
+  <Expandable title="Patch Operation">
+    <ParamField body="op" type="string" required>
+      Operation type: `add`, `remove`, `replace`, `move`, `copy`, or `test`
+    </ParamField>
+    <ParamField body="path" type="string" required>
+      JSON Pointer path to the field
+    </ParamField>
+    <ParamField body="value" type="any">
+      Value for the operation (required for add, replace, test)
+    </ParamField>
+    <ParamField body="from" type="string">
+      Source path for move and copy operations
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://api.lamassu.io/api/dmsmanager/v1/v1/dms/dms-123/metadata" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patches": [
+      {
+        "op": "add",
+        "path": "/environment",
+        "value": "staging"
+      },
+      {
+        "op": "replace",
+        "path": "/region",
+        "value": "eu-west-1"
+      }
+    ]
+  }'
+```
+
+---
+
+## Patch DMS Metadata
+
+<api method="PATCH" endpoint="/v1/dms/{id}/metadata" />
+
+Partially update metadata for a DMS instance using JSON Patch operations.
+
+<ParamField path="id" type="string" required>
+  DMS identifier
+</ParamField>
+
+### Request Body
+
+Same as Update DMS Metadata.
+
+---
+
+## Bind Identity to Device
+
+<api method="POST" endpoint="/v1/dms/bind-identity" />
+
+Bind an identity certificate to a device.
+
+### Request Body
+
+<ParamField body="bind_mode" type="string" required>
+  Binding mode specification
+</ParamField>
+
+<ParamField body="device_id" type="string" required>
+  Device identifier
+</ParamField>
+
+<ParamField body="certificate_serial_number" type="string" required>
+  Serial number of the certificate to bind
+</ParamField>
+
+### Response
+
+<ResponseField name="certificate" type="object">
+  Certificate details
+</ResponseField>
+
+<ResponseField name="dms" type="object">
+  DMS object
+</ResponseField>
+
+<ResponseField name="device" type="object">
+  Device object
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/v1/dms/bind-identity" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bind_mode": "explicit",
+    "device_id": "device-456",
+    "certificate_serial_number": "1234567890ABCDEF"
+  }'
+```

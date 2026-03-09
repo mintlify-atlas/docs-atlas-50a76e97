@@ -1,0 +1,269 @@
+---
+title: Authentication
+description: Authentication methods and identity verification in Lamassu IoT
+---
+
+Lamassu IoT supports multiple authentication mechanisms for both device enrollment and API access. This page describes the authentication methods available across the platform.
+
+## Authentication Methods
+
+Lamassu provides different authentication approaches depending on the use case:
+
+### Mutual TLS (mTLS)
+
+mTLS is the primary authentication method for device operations, particularly during enrollment and certificate lifecycle management.
+
+**How it works:**
+- Devices present a valid client certificate during the TLS handshake
+- The certificate must be issued by a CA trusted by the DMS (Device Management Service)
+- The DMS validates the client certificate against configured validation CAs
+- Used extensively in EST (Enrollment over Secure Transport) workflows
+
+**Use cases:**
+- Device certificate enrollment and re-enrollment
+- Secure device-to-platform communication
+- Bootstrap authentication before initial certificate issuance
+
+<Tip>
+For production deployments, always use mTLS for device authentication to ensure strong cryptographic identity verification.
+</Tip>
+
+### JWT Bearer Tokens
+
+All Lamassu REST APIs support JWT (JSON Web Token) authentication for user and service access.
+
+**Configuration:**
+```yaml
+identity_extractors:
+  jwt:
+    enabled: true
+```
+
+**Usage:**
+```bash
+curl -H "Authorization: Bearer <token>" \
+  https://lamassu.example.com/api/ca/v1/cas
+```
+
+The JWT token is parsed but not cryptographically verified by default. For production deployments, integrate with your identity provider (IdP) and configure JWT validation.
+
+**Token structure:**
+- Standard JWT format with header, payload, and signature
+- Claims include user identity, roles, and expiration
+- Supports standard `aud`, `iss`, `exp`, and `sub` claims
+
+### EST Authentication Profiles
+
+The DMS Manager service implements RFC 7030 (EST) with flexible authentication profiles.
+
+**Available profiles:**
+
+| Authentication Mode | Description | Use Case |
+|---------------------|-------------|----------|
+| **mTLS** | Client certificate required | Production device enrollment |
+| **NoAuth** | No authentication required | Testing, internal networks |
+| **Webhook** | External authorization service | Custom auth logic, SCEP integration |
+
+**EST endpoint structure:**
+```
+https://<HOST>/.well-known/est/<DMS_ID>/<operation>
+```
+
+**Example operations:**
+- `GET /cacerts` - Retrieve CA certificates (typically no auth required)
+- `POST /simpleenroll` - Enroll new certificate (requires authentication)
+- `POST /simplereenroll` - Renew existing certificate (authenticated with current cert)
+- `POST /serverkeygen` - Server-generated key pair (requires authentication)
+
+<Warning>
+The `NoAuth` EST profile should only be used in isolated development environments. Never expose NoAuth endpoints to untrusted networks.
+</Warning>
+
+## EST Authentication Workflow
+
+### Initial Enrollment with mTLS
+
+1. **Obtain bootstrap certificate**
+   - Device is provisioned with a manufacturer certificate or bootstrap credential
+   - Bootstrap certificate must be trusted by the DMS validation CA list
+
+2. **Generate CSR**
+   ```bash
+   # Generate private key
+   openssl genpkey -algorithm RSA -out device.key -pkeyopt rsa_keygen_bits:2048
+   
+   # Create certificate signing request
+   openssl req -new -key device.key -out device.csr \
+     -subj "/CN=device-001/O=YourOrg"
+   
+   # Convert to base64-encoded DER (required by Lamassu EST)
+   openssl req -in device.csr -outform DER | base64 -w 0 > device.b64
+   ```
+
+3. **Submit enrollment request**
+   ```bash
+   curl -v -k \
+     --cert bootstrap.crt --key bootstrap.key \
+     -H "Content-Type: application/pkcs10" \
+     --data-binary "@device.b64" \
+     "https://est.example.com/.well-known/est/dms-01/simpleenroll" \
+     -o response.b64
+   ```
+
+4. **Extract issued certificate**
+   ```bash
+   # Decode base64 response
+   base64 -d response.b64 > response.p7b
+   
+   # Extract certificate from PKCS#7
+   openssl pkcs7 -inform DER -in response.p7b \
+     -print_certs -out device_cert.pem
+   ```
+
+### Re-enrollment
+
+Devices use their current certificate to authenticate re-enrollment requests:
+
+```bash
+# Generate new CSR with same key or new key
+openssl req -new -key device.key -out renew.csr \
+  -subj "/CN=device-001/O=YourOrg"
+openssl req -in renew.csr -outform DER | base64 -w 0 > renew.b64
+
+# Re-enroll using current certificate for authentication
+curl -v -k \
+  --cert device_cert.pem --key device.key \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary "@renew.b64" \
+  "https://est.example.com/.well-known/est/dms-01/simplereenroll" \
+  -o renewed.b64
+```
+
+## Identity Extraction
+
+Lamassu extracts identity information from different authentication sources:
+
+### Client Certificate Identity
+
+When using mTLS:
+- Subject DN fields (CN, O, OU, etc.) are extracted
+- Certificate serial number is available
+- Issuer information is validated against trusted CAs
+
+### JWT Claims
+
+When using JWT tokens:
+- Standard claims: `sub`, `iss`, `aud`, `exp`
+- Custom claims can be mapped to user attributes
+- Role and permission claims for authorization
+
+## Authentication Configuration
+
+### DMS Authentication Settings
+
+Configure DMS authentication when creating or updating a DMS instance:
+
+```json
+{
+  "id": "manufacturing-dms",
+  "name": "Manufacturing Line DMS",
+  "settings": {
+    "enrollment_settings": {
+      "protocol": "EST",
+      "est_rfc7030_settings": {
+        "authentication": {
+          "type": "client_certificate",
+          "client_certificate": {
+            "validation_cas": ["bootstrap-ca-id"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Service-Level Authentication
+
+Each Lamassu service can be configured with authentication requirements:
+
+```yaml
+http:
+  middleware:
+    identity_extraction:
+      jwt:
+        enabled: true
+      client_certificate:
+        enabled: true
+```
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use mTLS for Devices" icon="shield-check">
+    Always require client certificates for device operations. Bootstrap certificates should have short validity periods.
+  </Card>
+  
+  <Card title="Rotate Bootstrap Certs" icon="arrows-rotate">
+    Regularly rotate bootstrap certificates and update device provisioning processes.
+  </Card>
+  
+  <Card title="Validate JWT Signatures" icon="signature">
+    Configure JWT validation with your IdP's public keys. Never accept unsigned tokens in production.
+  </Card>
+  
+  <Card title="Limit EST NoAuth" icon="triangle-exclamation">
+    Only use NoAuth EST profiles in isolated development environments.
+  </Card>
+</CardGroup>
+
+## Troubleshooting Authentication Issues
+
+### EST Enrollment Failures
+
+**Problem:** `401 Unauthorized` during enrollment
+
+**Solutions:**
+- Verify client certificate is trusted by DMS validation CAs
+- Check certificate expiration dates
+- Ensure client certificate chain is complete
+- Validate TLS handshake with `openssl s_client`
+
+```bash
+openssl s_client -connect est.example.com:443 \
+  -cert client.crt -key client.key -showcerts
+```
+
+**Problem:** `400 Bad Request` during enrollment
+
+**Solutions:**
+- Verify CSR is base64-encoded DER format (not PEM)
+- Check Content-Type header is `application/pkcs10`
+- Ensure no newlines in base64 data (use `base64 -w 0`)
+- Validate CSR locally:
+
+```bash
+# Decode and verify CSR
+base64 -d device.b64 | openssl req -inform DER -text -noout
+```
+
+### JWT Authentication Issues
+
+**Problem:** Token rejected by API
+
+**Solutions:**
+- Verify token expiration (`exp` claim)
+- Check token signature if validation is enabled
+- Ensure `Authorization: Bearer` header format is correct
+- Decode JWT to inspect claims:
+
+```bash
+# Decode JWT (header.payload.signature)
+echo "<payload_part>" | base64 -d | jq
+```
+
+## Related Topics
+
+- [Authorization](/security/authorization) - Role-based access control
+- [Security Best Practices](/security/best-practices) - Comprehensive security hardening
+- [PKI Operations](/core-concepts/pki) - Certificate authority management

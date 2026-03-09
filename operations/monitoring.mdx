@@ -1,0 +1,643 @@
+---
+title: Monitoring
+description: Monitoring and observability for Lamassu IoT
+---
+
+Effective monitoring is essential for operating a production PKI platform. Lamassu IoT provides comprehensive observability through OpenTelemetry, enabling metrics, traces, and logs to be exported to your monitoring stack.
+
+## Observability Architecture
+
+Lamassu implements the OpenTelemetry standard for telemetry data:
+
+```
+┌─────────────────────────────────────────────┐
+│  Lamassu Services                           │
+│  ┌────────┐  ┌──────────┐  ┌─────────────┐ │
+│  │ CA API │  │  Device  │  │ DMS Manager │ │
+│  │        │  │  Manager │  │             │ │
+│  └────────┘  └──────────┘  └─────────────┘ │
+│       │            │              │         │
+│       └────────────┴──────────────┘         │
+│              │ (OTLP)                       │
+└──────────────┼──────────────────────────────┘
+               ▼
+      ┌────────────────┐
+      │ OTEL Collector │
+      └────────────────┘
+               │
+       ┌───────┴────────┬──────────┐
+       ▼                ▼          ▼
+  ┌─────────┐    ┌─────────┐  ┌──────┐
+  │ Grafana │    │  Tempo  │  │ Loki │
+  │ (Mimir) │    │(Traces) │  │(Logs)│
+  └─────────┘    └─────────┘  └──────┘
+```
+
+## OpenTelemetry Configuration
+
+### Enabling Observability
+
+Configure OpenTelemetry in your service configuration:
+
+```yaml
+otel:
+  metrics:
+    enabled: true
+    interval_in_millis: 10000
+    hostname: "otel-collector"
+    port: 4318
+    scheme: "http"
+  traces:
+    enabled: true
+    hostname: "otel-collector"
+    port: 4318
+    scheme: "http"
+  logging:
+    enabled: true
+    hostname: "otel-collector"
+    port: 4318
+    scheme: "http"
+```
+
+### OTLP Endpoints
+
+Lamassu services export telemetry using OTLP (OpenTelemetry Protocol):
+
+- **gRPC:** Port 4317
+- **HTTP:** Port 4318
+
+**Production configuration with TLS:**
+
+```yaml
+otel:
+  metrics:
+    enabled: true
+    interval_in_millis: 30000
+    hostname: "otel-collector.internal.example.com"
+    port: 4318
+    scheme: "https"
+  traces:
+    enabled: true
+    hostname: "otel-collector.internal.example.com"
+    port: 4318
+    scheme: "https"
+```
+
+### Quick Start with LGTM Stack
+
+For development and testing, use the Grafana LGTM (Loki, Grafana, Tempo, Mimir) stack:
+
+```yaml
+# otel/docker-compose.yaml
+services:
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "3100:3100"   # Loki
+      - "9090:9090"   # Mimir (Prometheus)
+      - "3200:3200"   # Tempo
+    environment:
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_BASIC_ENABLED=false
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor metricsSummary traceToMetrics
+```
+
+**Start the stack:**
+
+```bash
+docker-compose -f otel/docker-compose.yaml up -d
+```
+
+**Access Grafana:**
+
+```
+http://localhost:3000
+```
+
+## Key Metrics
+
+### Certificate Authority Metrics
+
+Monitor CA health and usage:
+
+**Certificates issued per CA:**
+```promql
+rate(ca_certificates_issued_total{ca_id="production-ca"}[5m])
+```
+
+**Certificate signing latency:**
+```promql
+histogram_quantile(0.95, 
+  rate(ca_sign_operation_duration_seconds_bucket[5m])
+)
+```
+
+**Active CAs by crypto engine:**
+```promql
+count(ca_info) by (engine_type)
+```
+
+### Device Manager Metrics
+
+**Device enrollment rate:**
+```promql
+rate(device_enrollments_total[5m])
+```
+
+**Device status distribution:**
+```promql
+count(device_info) by (status)
+```
+
+**Devices approaching expiration:**
+```promql
+count(device_certificate_expiry_seconds < 2592000)  # < 30 days
+```
+
+### EST Enrollment Metrics
+
+**Enrollment success rate:**
+```promql
+rate(est_enrollment_success_total[5m]) / 
+  rate(est_enrollment_total[5m])
+```
+
+**Enrollment failures by reason:**
+```promql
+sum(rate(est_enrollment_failed_total[5m])) by (failure_reason)
+```
+
+**EST operation latency (p95):**
+```promql
+histogram_quantile(0.95,
+  rate(est_operation_duration_seconds_bucket[5m])
+) by (operation)
+```
+
+### HTTP API Metrics
+
+Lamassu automatically instruments HTTP endpoints with OpenTelemetry:
+
+**Request rate by endpoint:**
+```promql
+rate(http_server_requests_total[5m]) by (http_route, http_method)
+```
+
+**Response time by endpoint:**
+```promql
+histogram_quantile(0.95,
+  rate(http_server_duration_bucket[5m])
+) by (http_route)
+```
+
+**Error rate by status code:**
+```promql
+sum(rate(http_server_requests_total{http_status_code=~"5.."}[5m])) 
+  by (http_route)
+```
+
+### Database Metrics
+
+GORM and PostgreSQL metrics:
+
+**Database connection pool utilization:**
+```promql
+db_connections_in_use / db_connections_max
+```
+
+**Query latency (p99):**
+```promql
+histogram_quantile(0.99,
+  rate(db_query_duration_seconds_bucket[5m])
+) by (operation)
+```
+
+**Connection errors:**
+```promql
+rate(db_connection_errors_total[5m])
+```
+
+### Crypto Engine Metrics
+
+**Crypto operation latency by engine:**
+```promql
+histogram_quantile(0.95,
+  rate(crypto_operation_duration_seconds_bucket[5m])
+) by (engine_id, operation_type)
+```
+
+**Crypto operation failures:**
+```promql
+sum(rate(crypto_operation_failed_total[5m])) 
+  by (engine_id, failure_reason)
+```
+
+## Distributed Tracing
+
+### Trace Context Propagation
+
+Lamassu propagates trace context across service boundaries using W3C Trace Context:
+
+```go
+// Automatic trace propagation
+otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+    propagation.TraceContext{},
+    propagation.Baggage{},
+))
+```
+
+### Key Trace Operations
+
+**Certificate issuance flow:**
+
+```
+POST /api/ca/v1/cas/{ca-id}/certificates/sign
+  │
+  ├─ Validate CSR
+  │   └─ Parse X.509 CSR
+  │
+  ├─ Check CA status
+  │   └─ Database query: SELECT * FROM cas WHERE id=?
+  │
+  ├─ Crypto engine sign
+  │   ├─ Load CA private key
+  │   └─ Sign certificate (PKCS#11/Vault/AWS KMS)
+  │
+  ├─ Store certificate
+  │   └─ Database insert: INSERT INTO certificates
+  │
+  └─ Publish event
+      └─ EventBus: certificate.issued
+```
+
+**EST enrollment flow:**
+
+```
+POST /.well-known/est/{dms-id}/simpleenroll
+  │
+  ├─ Extract client certificate (mTLS)
+  │   └─ Validate against DMS validation CAs
+  │
+  ├─ Parse CSR from request body
+  │   └─ Decode base64 DER CSR
+  │
+  ├─ Get DMS configuration
+  │   └─ Database query: SELECT * FROM dms WHERE id=?
+  │
+  ├─ Call CA service to sign
+  │   └─ HTTP: POST /api/ca/v1/cas/{ca-id}/certificates/sign
+  │       └─ (See certificate issuance flow above)
+  │
+  └─ Return PKCS#7 response
+      └─ Encode certificate in base64 DER
+```
+
+### Viewing Traces in Grafana
+
+1. Navigate to **Explore** in Grafana
+2. Select **Tempo** data source
+3. Use **TraceQL** to query traces:
+
+```traceql
+{ span.http.route = "/api/ca/v1/cas/{id}/certificates/sign" }
+```
+
+**Filter by latency:**
+```traceql
+{ span.http.route = "/api/ca/v1/cas/{id}/certificates/sign" 
+  && duration > 1s }
+```
+
+**Find errors:**
+```traceql
+{ status = error }
+```
+
+## Logging
+
+### Structured Logging
+
+Lamassu uses structured logging with configurable levels:
+
+```yaml
+logs:
+  level: info  # debug, info, warn, error
+```
+
+**Log levels:**
+
+| Level | Use Case |
+|-------|----------|
+| `debug` | Development, troubleshooting |
+| `info` | Normal operations, key events |
+| `warn` | Potential issues, degraded performance |
+| `error` | Errors requiring attention |
+
+### Log Fields
+
+Standard fields in Lamassu logs:
+
+```json
+{
+  "timestamp": "2025-03-09T10:15:30.123Z",
+  "level": "info",
+  "service": "ca-api",
+  "trace_id": "abc123def456",
+  "span_id": "789xyz",
+  "message": "Certificate issued",
+  "ca_id": "production-ca",
+  "certificate_id": "cert-12345",
+  "subject_cn": "device-001",
+  "duration_ms": 245
+}
+```
+
+### Querying Logs with LogQL
+
+Use Loki's LogQL to query logs in Grafana:
+
+**All error logs:**
+```logql
+{service="ca-api"} |= "level=error"
+```
+
+**EST enrollment failures:**
+```logql
+{service="dms-manager"} 
+  |= "enrollment" 
+  |= "failed" 
+  | json 
+  | line_format "{{.timestamp}} [{{.dms_id}}] {{.failure_reason}}"
+```
+
+**Certificate issuance rate:**
+```logql
+sum(rate({service="ca-api"} |= "Certificate issued" [5m]))
+```
+
+**Slow database queries:**
+```logql
+{service=~".*"} 
+  |= "database query" 
+  | json 
+  | duration_ms > 1000
+```
+
+## Dashboards
+
+### Recommended Grafana Dashboards
+
+<CardGroup cols={2}>
+  <Card title="PKI Overview" icon="chart-line">
+    - Total CAs and certificates
+    - Certificate issuance rate
+    - Expiration distribution
+    - CA health status
+  </Card>
+  
+  <Card title="Device Fleet" icon="microchip">
+    - Total devices by status
+    - Enrollment success rate
+    - Devices near expiration
+    - Geographic distribution
+  </Card>
+  
+  <Card title="Service Health" icon="heart-pulse">
+    - HTTP request rate and latency
+    - Error rates by service
+    - Database connection pool
+    - Crypto engine performance
+  </Card>
+  
+  <Card title="Security Events" icon="shield">
+    - Failed authentications
+    - Certificate revocations
+    - CA operations (create/delete)
+    - DMS configuration changes
+  </Card>
+</CardGroup>
+
+### Sample Dashboard Panels
+
+**Certificate expiration timeline:**
+```promql
+sum(certificate_expiry_seconds < 7776000) by (ca_id)  # < 90 days
+```
+
+**Service availability (uptime):**
+```promql
+avg_over_time(
+  up{job="lamassu-ca"}[1h]
+) * 100
+```
+
+**EST enrollment funnel:**
+```promql
+sum(rate(est_enrollment_total[5m])) by (stage)
+# Stages: received, authenticated, validated, signed, issued
+```
+
+## Alerting
+
+### Alert Rules
+
+Define alert rules in Prometheus/Mimir:
+
+**High error rate:**
+```yaml
+groups:
+  - name: lamassu_alerts
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_server_requests_total{http_status_code=~"5.."}[5m])) 
+            by (service) 
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.service }}"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+```
+
+**Certificate expiration warning:**
+```yaml
+- alert: CertificatesExpiringSoon
+  expr: |
+    count(certificate_expiry_seconds < 604800)  # < 7 days
+      > 10
+  for: 1h
+  labels:
+    severity: warning
+  annotations:
+    summary: "{{ $value }} certificates expiring within 7 days"
+```
+
+**Crypto engine failure:**
+```yaml
+- alert: CryptoEngineFailure
+  expr: |
+    rate(crypto_operation_failed_total[5m]) > 0.01
+  for: 2m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Crypto engine {{ $labels.engine_id }} experiencing failures"
+```
+
+**Database connection exhaustion:**
+```yaml
+- alert: DatabaseConnectionPoolExhausted
+  expr: |
+    db_connections_in_use / db_connections_max > 0.9
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Database connection pool {{ $labels.service }} is 90% utilized"
+```
+
+### Alert Channels
+
+Configure notification channels in Grafana:
+
+- **Email:** Critical alerts to ops team
+- **Slack/Teams:** Real-time notifications
+- **PagerDuty:** On-call escalation for critical issues
+- **Webhook:** Integration with incident management systems
+
+## Health Checks
+
+### Service Health Endpoints
+
+Each Lamassu service exposes health check endpoints:
+
+**Liveness probe:**
+```bash
+curl http://localhost:8080/health/live
+# Returns: {"status": "UP"}
+```
+
+**Readiness probe:**
+```bash
+curl http://localhost:8080/health/ready
+# Returns: {"status": "UP", "checks": {"database": "UP", "eventbus": "UP"}}
+```
+
+### Kubernetes Probes
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lamassu-ca
+spec:
+  containers:
+  - name: ca-api
+    image: lamassuiot/ca:latest
+    livenessProbe:
+      httpGet:
+        path: /health/live
+        port: 8080
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /health/ready
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 5
+```
+
+## Performance Monitoring
+
+### Resource Utilization
+
+Monitor CPU, memory, and disk usage:
+
+**CPU usage:**
+```promql
+rate(process_cpu_seconds_total{service="ca-api"}[5m]) * 100
+```
+
+**Memory usage:**
+```promql
+process_resident_memory_bytes{service="ca-api"} / 1024 / 1024  # MB
+```
+
+**Disk I/O:**
+```promql
+rate(node_disk_io_time_seconds_total[5m])
+```
+
+### Capacity Planning
+
+Track growth trends:
+
+**Certificate growth rate:**
+```promql
+derive(count(certificate_info))
+```
+
+**Database size growth:**
+```promql
+pg_database_size_bytes{database="lamassu"}
+```
+
+## Troubleshooting with Observability
+
+### Scenario: Slow Certificate Issuance
+
+1. **Check HTTP latency metrics:**
+   ```promql
+   histogram_quantile(0.95,
+     rate(http_server_duration_bucket{http_route="/api/ca/v1/cas/{id}/certificates/sign"}[5m])
+   )
+   ```
+
+2. **View distributed trace to identify bottleneck:**
+   - Navigate to Tempo in Grafana
+   - Search for slow traces: `{ duration > 2s }`
+   - Identify which span is taking the most time (DB query, crypto operation, etc.)
+
+3. **Check crypto engine metrics:**
+   ```promql
+   histogram_quantile(0.95,
+     rate(crypto_operation_duration_seconds_bucket[5m])
+   ) by (engine_id)
+   ```
+
+4. **Review logs for errors:**
+   ```logql
+   {service="ca-api"} |= "sign" |= "error"
+   ```
+
+### Scenario: Enrollment Failures
+
+1. **Check enrollment failure rate:**
+   ```promql
+   rate(est_enrollment_failed_total[5m]) by (failure_reason)
+   ```
+
+2. **Review authentication failures:**
+   ```logql
+   {service="dms-manager"} |= "authentication" |= "failed"
+   ```
+
+3. **Trace a failed enrollment:**
+   ```traceql
+   { span.http.route = "/.well-known/est/{dms-id}/simpleenroll" 
+     && status = error }
+   ```
+
+## Related Topics
+
+- [Troubleshooting](/operations/troubleshooting) - Common issues and solutions
+- [Backup & Restore](/operations/backup-restore) - Data protection
+- [Security Best Practices](/security/best-practices) - Security hardening

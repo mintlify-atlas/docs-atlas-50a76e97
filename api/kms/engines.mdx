@@ -1,0 +1,268 @@
+---
+title: 'Crypto Engine Operations'
+description: 'Manage cryptographic engine providers'
+---
+
+## Overview
+
+Crypto engines are the backend providers that physically store and manage cryptographic keys. The KMS supports multiple crypto engine types including software-based engines and hardware security modules (HSMs).
+
+## Supported Engine Types
+
+- **Golang (Software)** - Software-based key storage using Go's crypto libraries
+- **AWS KMS** - Amazon Web Services Key Management Service
+- **HashiCorp Vault** - HashiCorp Vault secrets engine
+- **PKCS#11** - Hardware security modules via PKCS#11 interface
+- **Azure Key Vault** - Microsoft Azure Key Vault
+
+---
+
+## Get Crypto Engine Provider
+
+<api method="GET" endpoint="/engines" />
+
+Retrieve information about the configured crypto engine provider.
+
+### Response
+
+Returns details about the crypto engine provider configuration. The response structure varies based on the engine type.
+
+<ResponseField name="provider" type="string">
+  Type of crypto engine provider (e.g., `golang`, `aws-kms`, `vault`)
+</ResponseField>
+
+<ResponseField name="engines" type="array">
+  List of configured engine instances with their identifiers and configurations
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/engines" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "provider": "multi-engine",
+  "engines": [
+    {
+      "id": "golang",
+      "type": "software",
+      "status": "active"
+    },
+    {
+      "id": "aws-kms-prod",
+      "type": "aws-kms",
+      "region": "us-east-1",
+      "status": "active"
+    },
+    {
+      "id": "vault-prod",
+      "type": "vault",
+      "address": "https://vault.example.com",
+      "status": "active"
+    }
+  ]
+}
+```
+
+---
+
+## Choosing a Crypto Engine
+
+When creating or importing keys, you must specify an `engine_id` to indicate which crypto engine should manage the key.
+
+### Software Engine (Golang)
+
+**Use when:**
+- Development and testing
+- Lower security requirements
+- Cost optimization
+- Simple deployment
+
+**Characteristics:**
+- Keys stored in database or filesystem
+- No additional infrastructure required
+- Fast key generation and operations
+- Lower security than HSM-backed solutions
+
+### AWS KMS
+
+**Use when:**
+- Running in AWS infrastructure
+- Compliance requirements for HSM-backed keys
+- Need automatic key rotation
+- Require CloudTrail audit logging
+
+**Characteristics:**
+- FIPS 140-2 Level 2 validated HSMs
+- Automatic key rotation available
+- Integrated with AWS IAM
+- Pay-per-use pricing model
+
+### HashiCorp Vault
+
+**Use when:**
+- Using Vault for secrets management
+- Need fine-grained access policies
+- Require comprehensive audit logging
+- Multi-cloud or on-premises deployment
+
+**Characteristics:**
+- Supports multiple storage backends
+- Dynamic secrets and leasing
+- Extensive audit capabilities
+- Plugin-based architecture
+
+### PKCS#11 HSMs
+
+**Use when:**
+- Maximum security requirements
+- Regulatory compliance (e.g., PCI-DSS, FIPS 140-2 Level 3+)
+- On-premises key management
+- Need tamper-resistant hardware
+
+**Characteristics:**
+- Hardware-backed security
+- Tamper-resistant and tamper-evident
+- High-performance cryptographic operations
+- Support for various HSM vendors
+
+---
+
+## Engine Selection Best Practices
+
+<AccordionGroup>
+  <Accordion title="Development vs. Production">
+    Use software engines (Golang) for development and testing. Use HSM-backed engines (AWS KMS, Vault, PKCS#11) for production workloads.
+  </Accordion>
+
+  <Accordion title="Key Criticality">
+    - **Root CA keys**: Use HSM-backed engines with highest security
+    - **Intermediate CA keys**: Use HSM or cloud KMS
+    - **Device keys**: Software engines acceptable for most use cases
+    - **Signing keys**: Match engine to criticality of signed data
+  </Accordion>
+
+  <Accordion title="Performance Considerations">
+    Software engines offer the fastest operations but lowest security. HSMs provide strong security with some performance overhead. Cloud KMS services balance security and performance with network latency considerations.
+  </Accordion>
+
+  <Accordion title="Cost Optimization">
+    - **Software engines**: No additional cost
+    - **AWS KMS**: Per-key monthly fee + per-operation cost
+    - **Vault**: License cost + infrastructure cost
+    - **HSMs**: High upfront hardware cost + maintenance
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Example: Creating Keys in Different Engines
+
+### Software Engine
+
+```bash
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "RSA",
+    "size": 2048,
+    "engine_id": "golang",
+    "name": "dev-test-key",
+    "tags": ["development"]
+  }'
+```
+
+### AWS KMS Engine
+
+```bash
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "RSA",
+    "size": 4096,
+    "engine_id": "aws-kms-prod",
+    "name": "production-ca-key",
+    "tags": ["production", "ca", "root"],
+    "metadata": {
+      "compliance": "FIPS-140-2-L2",
+      "owner": "security-team"
+    }
+  }'
+```
+
+### Vault Engine
+
+```bash
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "ECDSA",
+    "size": 256,
+    "engine_id": "vault-prod",
+    "name": "signing-key",
+    "tags": ["signing", "production"],
+    "metadata": {
+      "vault_policy": "signing-keys",
+      "ttl": "8760h"
+    }
+  }'
+```
+
+---
+
+## Key Statistics
+
+<api method="GET" endpoint="/stats" />
+
+Get statistics about keys including distribution across engines.
+
+<ParamField query="filter" type="string">
+  Filter expression (e.g., `engine_id[eq]aws-kms-prod`, `algorithm[contains]RSA`)
+</ParamField>
+
+### Response
+
+<ResponseField name="total_keys" type="integer">
+  Total number of keys matching the filter
+</ResponseField>
+
+<ResponseField name="keys_distribution_per_engine" type="object">
+  Count of keys per crypto engine ID
+</ResponseField>
+
+<ResponseField name="keys_distribution_per_algorithm" type="object">
+  Count of keys per cryptographic algorithm
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/stats" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "total_keys": 150,
+  "keys_distribution_per_engine": {
+    "golang": 50,
+    "aws-kms-prod": 75,
+    "vault-prod": 25
+  },
+  "keys_distribution_per_algorithm": {
+    "RSA": 100,
+    "ECDSA": 45,
+    "Ed25519": 5
+  }
+}
+```

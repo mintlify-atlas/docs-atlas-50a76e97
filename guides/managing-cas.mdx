@@ -1,0 +1,332 @@
+---
+title: Managing Certificate Authorities
+description: Create, configure, and manage Certificate Authorities in Lamassu IoT
+---
+
+This guide covers the complete lifecycle of Certificate Authorities (CAs) in Lamassu, from creation to deletion.
+
+## Create a Certificate Authority
+
+Certificate Authorities can be created from scratch or imported from existing infrastructure.
+
+<Steps>
+  <Step title="Prepare CA parameters">
+    Define the CA subject, key metadata, validity period, and select an issuance profile.
+
+    ```json
+    {
+      "id": "my-root-ca",
+      "subject": {
+        "common_name": "My Root CA",
+        "organization": "Acme Corp",
+        "country": "US"
+      },
+      "key_metadata": {
+        "type": "RSA",
+        "bits": 4096
+      },
+      "ca_expiration": {
+        "type": "Duration",
+        "duration": "87600h"
+      },
+      "profile_id": "root-ca-profile",
+      "engine_id": "aws-kms-prod"
+    }
+    ```
+  </Step>
+
+  <Step title="Create the CA">
+    Submit the CA creation request:
+
+    ```bash
+    curl -X POST https://lamassu.example.com/api/ca/v1/cas \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @ca-config.json
+    ```
+
+    The response includes the newly created CA certificate:
+
+    ```json
+    {
+      "id": "my-root-ca",
+      "serial_number": "1a2b3c4d5e6f",
+      "level": 0,
+      "profile_id": "root-ca-profile",
+      "certificate": {
+        "status": "ACTIVE",
+        "valid_from": "2026-03-09T00:00:00Z",
+        "valid_to": "2036-03-09T00:00:00Z"
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Verify CA creation">
+    Retrieve the CA to confirm it's active:
+
+    ```bash
+    curl https://lamassu.example.com/api/ca/v1/cas/my-root-ca \
+      -H "Authorization: Bearer $TOKEN"
+    ```
+  </Step>
+</Steps>
+
+## Create Subordinate CAs
+
+Subordinate CAs are issued by a parent CA to build a certificate hierarchy.
+
+<Steps>
+  <Step title="Reference the parent CA">
+    Include the `parent_id` field when creating a subordinate CA:
+
+    ```json
+    {
+      "id": "issuing-ca-01",
+      "parent_id": "my-root-ca",
+      "subject": {
+        "common_name": "Issuing CA 01",
+        "organization": "Acme Corp",
+        "organization_unit": "IoT Division"
+      },
+      "key_metadata": {
+        "type": "RSA",
+        "bits": 2048
+      },
+      "ca_expiration": {
+        "type": "Duration",
+        "duration": "43800h"
+      },
+      "profile_id": "subordinate-ca-profile",
+      "engine_id": "aws-kms-prod"
+    }
+    ```
+  </Step>
+
+  <Step title="Create the subordinate CA">
+    ```bash
+    curl -X POST https://lamassu.example.com/api/ca/v1/cas \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @subordinate-ca.json
+    ```
+
+    The subordinate CA will have `level: 1` and its certificate will be signed by the parent.
+  </Step>
+</Steps>
+
+## Import an Existing CA
+
+Import CAs from external PKI systems or legacy infrastructure.
+
+<Steps>
+  <Step title="Prepare the CA certificate and key">
+    Convert your CA certificate and private key to the required format:
+
+    ```bash
+    # Certificate (PEM format)
+    cat ca.crt
+
+    # Private key (Base64 encoded PEM)
+    cat ca.key | base64 -w 0 > ca.key.b64
+    ```
+  </Step>
+
+  <Step title="Import the CA">
+    ```bash
+    curl -X POST https://lamassu.example.com/api/ca/v1/cas/import \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "id": "imported-ca",
+        "engine_id": "filesystem-1",
+        "ca_type": "IMPORTED_WITH_KEY",
+        "private_key": "'$(cat ca.key.b64)'",
+        "ca": {
+          "certificate": "'$(cat ca.crt | base64 -w 0)'"
+        },
+        "profile_id": "imported-ca-profile"
+      }'
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Imported CAs must specify a valid `engine_id`. Use `filesystem-1` for CAs with keys stored as files.
+</Note>
+
+## List and Filter CAs
+
+Retrieve CAs with pagination, sorting, and advanced filtering.
+
+<CodeGroup>
+```bash List all CAs
+curl "https://lamassu.example.com/api/ca/v1/cas?page_size=25" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by status
+curl "https://lamassu.example.com/api/ca/v1/cas?filter=status[eq]=ACTIVE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by engine
+curl "https://lamassu.example.com/api/ca/v1/cas?filter=engine_id[eq]=aws-kms-prod" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by metadata (JSONPath)
+curl "https://lamassu.example.com/api/ca/v1/cas?filter=metadata[jsonpath]$.environment%20==%20%22production%22" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Sort by creation date
+curl "https://lamassu.example.com/api/ca/v1/cas?sort_by=valid_from&sort_mode=desc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+</CodeGroup>
+
+## Update CA Metadata
+
+Modify CA metadata using JSON Patch operations.
+
+<Steps>
+  <Step title="Create patch operations">
+    Use JSON Patch to add, replace, or remove metadata fields:
+
+    ```json
+    {
+      "patches": [
+        {
+          "op": "add",
+          "path": "/environment",
+          "value": "production"
+        },
+        {
+          "op": "replace",
+          "path": "/owner",
+          "value": "security-team"
+        }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Apply the patch">
+    Use `PUT` to replace all metadata or `PATCH` to merge changes:
+
+    <CodeGroup>
+    ```bash PUT (replace)
+    curl -X PUT https://lamassu.example.com/api/ca/v1/cas/my-root-ca/metadata \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @metadata-patch.json
+    ```
+
+    ```bash PATCH (merge)
+    curl -X PATCH https://lamassu.example.com/api/ca/v1/cas/my-root-ca/metadata \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @metadata-patch.json
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+<Warning>
+  `PUT` replaces the entire metadata object. Use `PATCH` to preserve existing fields.
+</Warning>
+
+## Update CA Status
+
+Revoke or deactivate a CA when it's compromised or no longer needed.
+
+<Steps>
+  <Step title="Revoke the CA">
+    ```bash
+    curl -X POST https://lamassu.example.com/api/ca/v1/cas/my-root-ca/status \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "status": "REVOKED",
+        "revocation_reason": "keyCompromise"
+      }'
+    ```
+
+    Common revocation reasons:
+    - `keyCompromise` - Private key was exposed
+    - `superseded` - CA has been replaced
+    - `cessationOfOperation` - CA is no longer in use
+  </Step>
+
+  <Step title="Verify status change">
+    ```bash
+    curl https://lamassu.example.com/api/ca/v1/cas/my-root-ca \
+      -H "Authorization: Bearer $TOKEN" \
+      | jq '.certificate.status'
+    ```
+  </Step>
+</Steps>
+
+## Update CA Issuance Profile
+
+Change the profile used when the CA issues new certificates.
+
+```bash
+curl -X PUT https://lamassu.example.com/api/ca/v1/cas/my-root-ca/profile \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"profile_id": "new-profile-id"}'
+```
+
+<Note>
+  Changing the issuance profile only affects **new certificates**. Existing certificates are not modified.
+</Note>
+
+## Reissue a CA Certificate
+
+Renew a CA before it expires or after a configuration change.
+
+```bash
+curl -X POST https://lamassu.example.com/api/ca/v1/cas/my-root-ca/reissue \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"profile_id": "root-ca-profile"}'
+```
+
+The CA retains its ID and hierarchy position, but receives a new certificate with a fresh validity period.
+
+## Delete a CA
+
+Permanently remove a CA from the system.
+
+<Warning>
+  Deleting a CA is **irreversible**. All certificates issued by this CA will lose their trust chain.
+</Warning>
+
+```bash
+curl -X DELETE https://lamassu.example.com/api/ca/v1/cas/my-root-ca \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Get CA by Common Name
+
+Find CAs using their subject common name:
+
+```bash
+curl "https://lamassu.example.com/api/ca/v1/cas/cn/My%20Root%20CA" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+This returns all CAs matching the common name (URL-encoded).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Issuance Profiles" icon="file-certificate" href="/guides/issuance-profiles">
+    Configure certificate templates
+  </Card>
+  <Card title="Device Lifecycle" icon="microchip" href="/guides/device-lifecycle">
+    Issue certificates to devices
+  </Card>
+</CardGroup>

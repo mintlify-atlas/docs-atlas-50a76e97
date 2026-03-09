@@ -1,0 +1,446 @@
+---
+title: 'Device Operations'
+description: 'Create, read, update, and delete devices in Lamassu IoT'
+---
+
+## List Devices
+
+<api-endpoint method="GET" path="/api/devmanager/v1/devices" />
+
+Retrieve a paginated list of devices with optional filtering and sorting.
+
+### Query Parameters
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination token from previous response
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field name to sort by (e.g., `creation_timestamp`, `id`, `status`)
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort direction: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression. Supports filtering by:
+  - `id` - Device identifier
+  - `dms_owner` - DMS identifier
+  - `status` - Device status
+  - `tags` - Device tags
+  - `creation_timestamp` - Creation time
+  
+  See [filtering examples](#filtering-examples) below.
+</ParamField>
+
+### Response
+
+<ResponseField name="next" type="string">
+  Bookmark for the next page (empty if no more results)
+</ResponseField>
+
+<ResponseField name="list" type="array">
+  Array of device objects
+  
+  <ResponseField name="id" type="string">
+    Device identifier
+  </ResponseField>
+  
+  <ResponseField name="tags" type="array">
+    Device tags
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Device status (NO_IDENTITY, ACTIVE, RENEWAL_WINDOW, ABOUT_TO_EXPIRE, EXPIRED, REVOKED, DECOMMISSIONED)
+  </ResponseField>
+  
+  <ResponseField name="icon" type="string">
+    Device icon name
+  </ResponseField>
+  
+  <ResponseField name="icon_color" type="string">
+    Icon color (hex format)
+  </ResponseField>
+  
+  <ResponseField name="creation_timestamp" type="string">
+    ISO 8601 creation timestamp
+  </ResponseField>
+  
+  <ResponseField name="metadata" type="object">
+    Device metadata (key-value pairs)
+  </ResponseField>
+  
+  <ResponseField name="dms_owner" type="string">
+    DMS identifier that manages this device
+  </ResponseField>
+  
+  <ResponseField name="identity" type="object">
+    Active identity slot information
+  </ResponseField>
+  
+  <ResponseField name="slots" type="object">
+    All identity slots
+  </ResponseField>
+  
+  <ResponseField name="events" type="object">
+    Device events
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/devices?page_size=50&sort_by=creation_timestamp&sort_mode=desc" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Filtering Examples
+
+```bash
+# Filter by DMS
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=dms_owner[eq]:dms-production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Filter by tag (case-insensitive)
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=tags[contains_ic]:sensor" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Filter by status
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=status[eq]:ACTIVE" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Multiple filters: active devices with 'production' tag
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=status[eq]:ACTIVE&filter=tags[contains]:production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Devices created after a specific date
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=creation_timestamp[af]:2024-01-01T00:00:00Z" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Create Device
+
+<api-endpoint method="POST" path="/api/devmanager/v1/devices" />
+
+Create a new device in the system.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Unique device identifier
+</ParamField>
+
+<ParamField body="alias" type="string">
+  Device alias or friendly name
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Array of string tags for categorization
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Key-value pairs for custom device metadata
+</ParamField>
+
+<ParamField body="dms_id" type="string">
+  DMS identifier that will manage this device
+</ParamField>
+
+<ParamField body="icon" type="string">
+  Icon name for UI display
+</ParamField>
+
+<ParamField body="icon_color" type="string">
+  Icon color in hex format (e.g., `#FF5733`)
+</ParamField>
+
+### Response
+
+Returns the created device object with all fields populated.
+
+### Example Request
+
+```bash
+curl -X POST "https://your-instance.com/api/devmanager/v1/devices" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "device-12345",
+    "alias": "Warehouse Temperature Sensor",
+    "tags": ["sensor", "temperature", "warehouse-a"],
+    "metadata": {
+      "location": "warehouse-a",
+      "floor": "2",
+      "zone": "storage"
+    },
+    "dms_id": "dms-production",
+    "icon": "thermometer",
+    "icon_color": "#FF5733"
+  }'
+```
+
+---
+
+## Get Device by ID
+
+<api-endpoint method="GET" path="/api/devmanager/v1/devices/{id}" />
+
+Retrieve a specific device by its identifier.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device identifier
+</ParamField>
+
+### Response
+
+Returns the device object with all fields.
+
+### Example Request
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/devices/device-12345" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Delete Device
+
+<api-endpoint method="DELETE" path="/api/devmanager/v1/devices/{id}" />
+
+Permanently delete a device from the system.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device identifier
+</ParamField>
+
+### Response
+
+Returns `204 No Content` on success.
+
+### Example Request
+
+```bash
+curl -X DELETE "https://your-instance.com/api/devmanager/v1/devices/device-12345" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Update Identity Slot
+
+<api-endpoint method="PUT" path="/api/devmanager/v1/devices/{id}/idslot" />
+
+Update the device's identity slot configuration.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="status" type="string">
+  Identity slot status
+</ParamField>
+
+<ParamField body="active_version" type="integer">
+  Active version number
+</ParamField>
+
+<ParamField body="type" type="string">
+  Identity type
+</ParamField>
+
+<ParamField body="versions" type="object">
+  Version-specific identity information
+</ParamField>
+
+### Response
+
+Returns the updated device object.
+
+### Example Request
+
+```bash
+curl -X PUT "https://your-instance.com/api/devmanager/v1/devices/device-12345/idslot" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "ACTIVE",
+    "active_version": 2,
+    "type": "X509"
+  }'
+```
+
+---
+
+## Update Device Metadata
+
+<api-endpoint method="PUT" path="/api/devmanager/v1/devices/{id}/metadata" />
+
+Replace all device metadata with new values.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="patches" type="array" required>
+  Array of JSON Patch operations
+  
+  <ParamField body="op" type="string" required>
+    Operation type: `add`, `remove`, `replace`, `move`, `copy`, `test`
+  </ParamField>
+  
+  <ParamField body="path" type="string" required>
+    JSON path to the field (e.g., `/location`, `/sensors/0`)
+  </ParamField>
+  
+  <ParamField body="value" type="any">
+    Value for the operation (not used with `remove`)
+  </ParamField>
+  
+  <ParamField body="from" type="string">
+    Source path for `move` and `copy` operations
+  </ParamField>
+</ParamField>
+
+### Response
+
+Returns the updated device object.
+
+### Example Request
+
+```bash
+curl -X PUT "https://your-instance.com/api/devmanager/v1/devices/device-12345/metadata" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/location",
+        "value": "warehouse-b"
+      },
+      {
+        "op": "add",
+        "path": "/firmware_version",
+        "value": "2.1.0"
+      }
+    ]
+  }'
+```
+
+---
+
+## Patch Device Metadata
+
+<api-endpoint method="PATCH" path="/api/devmanager/v1/devices/{id}/metadata" />
+
+Partially update device metadata using JSON Patch operations.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device identifier
+</ParamField>
+
+### Request Body
+
+Same as [Update Device Metadata](#update-device-metadata).
+
+### Response
+
+Returns the updated device object.
+
+### Example Request
+
+```bash
+curl -X PATCH "https://your-instance.com/api/devmanager/v1/devices/device-12345/metadata" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patches": [
+      {
+        "op": "add",
+        "path": "/last_maintenance",
+        "value": "2026-03-09T10:00:00Z"
+      }
+    ]
+  }'
+```
+
+---
+
+## Decommission Device
+
+<api-endpoint method="DELETE" path="/api/devmanager/v1/devices/{id}/decommission" />
+
+Decommission a device, setting its status to `DECOMMISSIONED`.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device identifier
+</ParamField>
+
+### Response
+
+Returns `204 No Content` on success.
+
+### Example Request
+
+```bash
+curl -X DELETE "https://your-instance.com/api/devmanager/v1/devices/device-12345/decommission" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## List Devices by DMS
+
+<api-endpoint method="GET" path="/api/devmanager/v1/devices/dms/{id}" />
+
+Retrieve devices managed by a specific DMS.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  DMS identifier
+</ParamField>
+
+### Query Parameters
+
+Supports the same query parameters as [List Devices](#list-devices):
+- `page_size`
+- `bookmark`
+- `sort_by`
+- `sort_mode`
+- `filter`
+
+### Response
+
+Returns the same response structure as [List Devices](#list-devices).
+
+### Example Request
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/devices/dms/dms-production?filter=status[eq]:ACTIVE" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```

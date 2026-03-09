@@ -1,0 +1,169 @@
+---
+title: Go SDK Overview
+description: Overview of the Lamassu IoT Go SDK architecture and features
+---
+
+The Lamassu IoT Go SDK provides a comprehensive set of HTTP-based client libraries for interacting with Lamassu services, including Certificate Authority (CA) management, Device Management, DMS (Device Management Service), and Key Management Service (KMS).
+
+## Architecture
+
+The SDK is structured around service-specific clients that communicate with Lamassu backend services via HTTP/HTTPS. All clients follow a consistent pattern:
+
+- **HTTP-based communication** with support for various authentication methods
+- **Type-safe interfaces** using Go generics
+- **Context-aware operations** for cancellation and timeout support
+- **Structured error handling** with predefined error mappings
+- **Pagination support** for list operations
+
+## Available Clients
+
+### CA Client
+Manages Certificate Authorities, certificates, issuance profiles, and cryptographic operations.
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+
+caClient := sdk.NewHttpCAClient(httpClient, "https://ca.example.com")
+```
+
+### Device Manager Client
+Handles device lifecycle management, device groups, and device metadata.
+
+```go
+deviceClient := sdk.NewHttpDeviceManagerClient(httpClient, "https://device.example.com")
+```
+
+### DMS Manager Client
+Manages DMS instances and device identity binding operations.
+
+```go
+dmsClient := sdk.NewHttpDMSManagerClient(httpClient, "https://dms.example.com")
+```
+
+### KMS Client
+Provides key management operations including key creation, import, signing, and verification.
+
+```go
+kmsClient := sdk.NewHttpKMSClient(httpClient, "https://kms.example.com")
+```
+
+## Key Features
+
+### Authentication Support
+
+The SDK supports multiple authentication methods:
+
+- **Mutual TLS (mTLS)** - Certificate-based authentication
+- **JWT/OAuth2** - Token-based authentication with OIDC support
+- **API Key** - Header-based API key authentication
+- **No Auth** - For development environments
+
+### HTTP Client Configuration
+
+Build customized HTTP clients with:
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/config"
+    "github.com/sirupsen/logrus"
+)
+
+logger := logrus.NewEntry(logrus.New())
+
+httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+    Protocol: "https",
+    Hostname: "api.example.com",
+    Port:     443,
+    BasePath: "/api",
+    AuthMode: config.MTLS,
+    AuthMTLSOptions: config.HTTPMTLSConfig{
+        CertFile: "/path/to/cert.pem",
+        KeyFile:  "/path/to/key.pem",
+    },
+    InsecureSkipVerify: false,
+    CACertificateFile:  "/path/to/ca.pem",
+}, logger)
+```
+
+### Custom Headers
+
+Inject custom headers into all requests:
+
+```go
+// Add source identifier header
+client := sdk.HttpClientWithSourceHeaderInjector(httpClient, "my-app-v1.0")
+
+// Add any custom header
+client := sdk.HttpClientWithCustomHeaders(httpClient, "X-Custom-Header", "value")
+```
+
+### Query Parameters and Filtering
+
+The SDK provides powerful filtering and pagination capabilities:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/resources"
+
+queryParams := &resources.QueryParameters{
+    PageSize: 50,
+    Sort: resources.SortOptions{
+        SortField: "created_at",
+        SortMode:  resources.SortModeDesc,
+    },
+    Filters: []resources.FilterOption{
+        {
+            Field:           "status",
+            FilterOperation: resources.StringEqual,
+            Value:           "active",
+        },
+    },
+}
+```
+
+### Exhaustive Iteration
+
+Many list operations support exhaustive iteration to retrieve all results:
+
+```go
+import "context"
+
+var devices []*models.Device
+
+_, err := deviceClient.GetDevices(context.Background(), services.GetDevicesInput{
+    ExhaustiveRun:   true,
+    QueryParameters: queryParams,
+    ApplyFunc: func(device models.Device) {
+        devices = append(devices, &device)
+    },
+})
+```
+
+## Error Handling
+
+The SDK maps HTTP status codes to specific error types from the `errs` package:
+
+```go
+import (
+    "context"
+    "errors"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/errs"
+)
+
+ca, err := caClient.GetCAByID(context.Background(), services.GetCAByIDInput{
+    CAID: "my-ca",
+})
+if err != nil {
+    if errors.Is(err, errs.ErrCANotFound) {
+        // Handle CA not found
+    }
+    // Handle other errors
+}
+```
+
+## Next Steps
+
+- [Installation Guide](/sdk/installation) - Set up the SDK in your project
+- [CA Client](/sdk/ca-client) - Certificate Authority operations
+- [Device Manager Client](/sdk/device-manager-client) - Device management
+- [DMS Manager Client](/sdk/dms-manager-client) - DMS operations
+- [KMS Client](/sdk/kms-client) - Key management operations

@@ -1,0 +1,248 @@
+---
+title: API Overview
+description: Introduction to the Lamassu IoT API architecture, base URLs, and common patterns
+---
+
+The Lamassu IoT Platform provides a comprehensive REST API for managing certificate authorities, devices, keys, and related resources. All APIs follow RESTful principles with consistent patterns for authentication, pagination, filtering, and error handling.
+
+## Architecture
+
+Lamassu's API is organized into multiple services, each responsible for specific domain operations:
+
+| Service | Base URL | Description |
+|---------|----------|-------------|
+| **CA Service** | `/api/ca/v1` | Certificate Authority operations, certificate lifecycle, and issuance profiles |
+| **Device Manager** | `/api/devmanager/v1` | Device inventory, lifecycle, and identity management |
+| **DMS Manager** | `/api/dmsmanager/v1` | Device Management Service configuration and EST enrollment |
+| **KMS** | `/api/kms/v1` | Key Management Service for cryptographic operations |
+
+## API Design Principles
+
+### RESTful Resources
+
+All endpoints follow REST conventions:
+- **GET** - Retrieve resources
+- **POST** - Create new resources
+- **PUT** - Update existing resources (full replacement)
+- **PATCH** - Partial updates (metadata only)
+- **DELETE** - Remove resources
+
+### Consistent Response Format
+
+List endpoints return paginated results with a standard structure:
+
+```json
+{
+  "list": [
+    // Array of resource objects
+  ],
+  "next": "bookmark-token"
+}
+```
+
+<ResponseField name="list" type="array" required>
+  Array of resource objects matching the query
+</ResponseField>
+
+<ResponseField name="next" type="string">
+  Pagination bookmark for the next page. Omitted if there are no more results.
+</ResponseField>
+
+### Pagination
+
+All list endpoints support cursor-based pagination:
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page (maximum varies by endpoint)
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Bookmark token from the previous response's `next` field
+</ParamField>
+
+**Example Request:**
+```bash
+curl "https://your-instance.com/api/ca/v1/cas?page_size=50" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Example Response:**
+```json
+{
+  "list": [
+    { "id": "ca-1", "certificate": {...} },
+    { "id": "ca-2", "certificate": {...} }
+  ],
+  "next": "eyJpZCI6ImNhLTIiLCJ0cyI6MTcwOTU1MjQwMH0="
+}
+```
+
+To retrieve the next page:
+```bash
+curl "https://your-instance.com/api/ca/v1/cas?bookmark=eyJpZCI6ImNhLTIiLCJ0cyI6MTcwOTU1MjQwMH0=" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Sorting
+
+List endpoints support server-side sorting:
+
+<ParamField query="sort_by" type="string">
+  Field name to sort by (e.g., `creation_ts`, `status`, `id`)
+</ParamField>
+
+<ParamField query="sort_mode" type="string" default="asc">
+  Sort direction: `asc` (ascending) or `desc` (descending)
+</ParamField>
+
+**Example:**
+```bash
+curl "https://your-instance.com/api/ca/v1/cas?sort_by=creation_ts&sort_mode=desc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+For advanced sorting on JSON fields, see [Filtering and Sorting](/api/filtering).
+
+## Common Response Codes
+
+The API uses standard HTTP status codes:
+
+| Code | Status | Meaning |
+|------|--------|----------|
+| **200** | OK | Request succeeded |
+| **201** | Created | Resource successfully created |
+| **204** | No Content | Successful deletion (no response body) |
+| **400** | Bad Request | Invalid request parameters or validation error |
+| **401** | Unauthorized | Missing or invalid authentication |
+| **404** | Not Found | Resource does not exist |
+| **409** | Conflict | Resource already exists or operation conflicts with current state |
+| **500** | Internal Server Error | Server-side error |
+
+### Error Response Format
+
+All error responses include a JSON body with the error message:
+
+```json
+{
+  "err": "CA with id 'my-ca' not found"
+}
+```
+
+<ResponseField name="err" type="string" required>
+  Human-readable error message describing what went wrong
+</ResponseField>
+
+**Example Error Scenarios:**
+
+<CodeGroup>
+```json 400 Bad Request
+{
+  "err": "invalid certificate serial number format"
+}
+```
+
+```json 404 Not Found
+{
+  "err": "CA with id 'production-ca' not found"
+}
+```
+
+```json 409 Conflict
+{
+  "err": "CA with id 'root-ca' already exists"
+}
+```
+</CodeGroup>
+
+## Common Patterns
+
+### Resource Identifiers
+
+Resources are typically identified by:
+- **ID**: Alphanumeric identifier (e.g., `my-ca`, `device-123`)
+- **Serial Number**: For certificates (e.g., hexadecimal string)
+- **Path Parameters**: Embedded in the URL (e.g., `/cas/{id}`)
+
+### Metadata Management
+
+Most resources support custom metadata via dedicated endpoints:
+
+- **PUT** `/resource/{id}/metadata` - Replace all metadata
+- **PATCH** `/resource/{id}/metadata` - Update specific metadata fields
+
+Metadata operations use JSON Patch format:
+
+```json
+{
+  "patches": [
+    {
+      "op": "add",
+      "path": "/environment",
+      "value": "production"
+    },
+    {
+      "op": "replace",
+      "path": "/region",
+      "value": "us-west-2"
+    },
+    {
+      "op": "remove",
+      "path": "/temporary_flag"
+    }
+  ]
+}
+```
+
+### Status Updates
+
+Certificates and CAs support status transitions via POST to `/status` endpoints:
+
+```bash
+curl -X POST "https://your-instance.com/api/ca/v1/certificates/{sn}/status" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "REVOKED",
+    "revocation_reason": "key_compromise"
+  }'
+```
+
+### Timestamp Format
+
+All timestamps use ISO 8601 format with UTC timezone:
+
+```json
+{
+  "creation_ts": "2026-03-09T14:32:00Z",
+  "valid_from": "2026-01-01T00:00:00Z",
+  "valid_to": "2027-01-01T00:00:00Z"
+}
+```
+
+## Rate Limiting
+
+The API does not currently enforce global rate limits, but clients should implement:
+- Exponential backoff for retry logic
+- Connection pooling for concurrent requests
+- Respect for `Retry-After` headers if present
+
+## Versioning
+
+The API version is included in the base URL path (e.g., `/api/ca/v1`). Breaking changes will result in a new API version (`v2`, `v3`, etc.), with the previous version maintained for backward compatibility.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="lock" href="/api/authentication">
+    Learn about JWT bearer tokens and mTLS authentication
+  </Card>
+  <Card title="Filtering & Sorting" icon="filter" href="/api/filtering">
+    Advanced filtering with JSONPath and server-side sorting
+  </Card>
+  <Card title="CA API" icon="certificate" href="/api/ca/overview">
+    Manage certificate authorities and certificates
+  </Card>
+  <Card title="Device API" icon="microchip" href="/api/devices/overview">
+    Device lifecycle and identity management
+  </Card>
+</CardGroup>

@@ -1,0 +1,219 @@
+---
+title: 'Alerts API Overview'
+description: 'Event monitoring and notification subscription service for Lamassu IoT Platform'
+---
+
+## Introduction
+
+The Alerts API provides event monitoring and notification capabilities for the Lamassu IoT Platform. Users can subscribe to specific event types and receive notifications through various channels when events occur.
+
+## Base URL
+
+```
+/api/alerts/v1
+```
+
+## Authentication
+
+All Alerts API endpoints require Bearer token authentication using JWT tokens.
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  https://your-domain.com/api/alerts/v1/events/latest
+```
+
+## API Groups
+
+The Alerts API is organized into two main groups:
+
+### Events
+
+Inspect and monitor the latest events per event type:
+- Retrieve the most recent event for each event type
+- View event metadata including timestamp and occurrence count
+
+### Subscriptions
+
+Manage user alert subscriptions:
+- List all subscriptions for a user
+- Subscribe to specific event types
+- Unsubscribe from events
+- Configure notification channels
+- Set conditional filters for events
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Channel Delivery" icon="bell">
+    Receive notifications via Email, Microsoft Teams, or custom webhooks
+  </Card>
+  <Card title="Conditional Filters" icon="filter">
+    Subscribe to events with specific conditions using JSON Schema, JSONPath, or JavaScript expressions
+  </Card>
+  <Card title="Event Monitoring" icon="chart-line">
+    Track the latest events and their occurrence counts per event type
+  </Card>
+  <Card title="Flexible Subscriptions" icon="users">
+    Each user can manage their own subscriptions independently
+  </Card>
+</CardGroup>
+
+## Supported Notification Channels
+
+### Email
+
+Receive notifications via email:
+
+```json
+{
+  "type": "EMAIL",
+  "name": "Security Alerts",
+  "config": {
+    "email": "admin@example.com"
+  }
+}
+```
+
+### Microsoft Teams
+
+Send notifications to Microsoft Teams channels:
+
+```json
+{
+  "type": "MSTEAMS",
+  "name": "Operations Channel",
+  "config": {
+    "webhook_url": "https://outlook.office.com/webhook/..."
+  }
+}
+```
+
+### Webhooks
+
+Integrate with custom systems via HTTP webhooks:
+
+```json
+{
+  "type": "WEBHOOK",
+  "name": "Custom Integration",
+  "config": {
+    "webhook_url": "https://api.example.com/alerts",
+    "webhook_method": "POST"
+  }
+}
+```
+
+## Subscription Conditions
+
+Filter events using three condition types:
+
+### JSON Schema
+
+Validate event payload against a JSON Schema:
+
+```json
+{
+  "type": "JSON-SCHEMA",
+  "condition": "{\"properties\": {\"severity\": {\"enum\": [\"critical\", \"high\"]}}}"
+}
+```
+
+### JSONPath
+
+Filter events using JSONPath expressions:
+
+```json
+{
+  "type": "JSON-PATH",
+  "condition": "$.data.status == 'failed'"
+}
+```
+
+### JavaScript
+
+Use JavaScript expressions for complex filtering:
+
+```json
+{
+  "type": "JAVASCRIPT",
+  "condition": "event.data.count > 100 && event.data.severity === 'critical'"
+}
+```
+
+## Common Event Types
+
+Typical event types in the Lamassu platform:
+
+- **Certificate Issued** - New certificate issued
+- **Certificate Revoked** - Certificate revoked
+- **Certificate Expiring** - Certificate nearing expiration
+- **Device Enrolled** - New device enrolled
+- **Device Removed** - Device removed from system
+- **CA Created** - New Certificate Authority created
+- **CA Expired** - Certificate Authority expired
+- **DMS Created** - New DMS instance created
+- **Enrollment Failed** - Device enrollment failed
+
+## Common Use Cases
+
+### Monitor Critical Certificate Events
+
+```json
+{
+  "event_type": "certificate.revoked",
+  "conditions": [
+    {
+      "type": "JSON-PATH",
+      "condition": "$.data.ca_id == 'root-ca-1'"
+    }
+  ],
+  "channel": {
+    "type": "EMAIL",
+    "config": {"email": "security@example.com"}
+  }
+}
+```
+
+### Alert on Enrollment Failures
+
+```json
+{
+  "event_type": "enrollment.failed",
+  "channel": {
+    "type": "MSTEAMS",
+    "config": {"webhook_url": "https://..."}
+  }
+}
+```
+
+### Track High-Value Device Changes
+
+```json
+{
+  "event_type": "device.removed",
+  "conditions": [
+    {
+      "type": "JAVASCRIPT",
+      "condition": "event.data.tags.includes('production') && event.data.tags.includes('critical')"
+    }
+  ],
+  "channel": {
+    "type": "WEBHOOK",
+    "config": {
+      "webhook_url": "https://api.example.com/alerts",
+      "webhook_method": "POST"
+    }
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Events" icon="calendar" href="/api/alerts/endpoints">
+    Monitor the latest events
+  </Card>
+  <Card title="Subscriptions" icon="bell" href="/api/alerts/endpoints">
+    Manage alert subscriptions
+  </Card>
+</CardGroup>

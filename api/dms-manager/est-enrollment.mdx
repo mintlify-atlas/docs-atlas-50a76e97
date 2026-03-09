@@ -1,0 +1,338 @@
+---
+title: 'EST Enrollment'
+description: 'Enrollment over Secure Transport (RFC 7030) endpoints'
+---
+
+## Overview
+
+The EST (Enrollment over Secure Transport) endpoints implement RFC 7030 for device certificate enrollment. These endpoints support multiple enrollment flows including initial enrollment, re-enrollment, and server-side key generation.
+
+<Note>
+  EST endpoints use **mutual TLS authentication** with client certificates instead of Bearer tokens. Some endpoints like `/cacerts` are publicly accessible without authentication.
+</Note>
+
+## Authentication Profile Selector (APS)
+
+Many EST endpoints support an optional `{aps}` path parameter that allows different authentication profiles to be configured for different device populations or use cases.
+
+---
+
+## Get CA Certificates
+
+<api method="GET" endpoint="/.well-known/est/cacerts" />
+
+Retrieve the CA certificates bundle for EST enrollment. This endpoint is publicly accessible (no authentication required).
+
+### Response
+
+Returns a PKCS#7 certificate bundle containing the CA certificates.
+
+**Content-Type:** `application/pkcs7-mime`
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/cacerts" \
+  --output cacerts.p7b
+```
+
+---
+
+## Get CA Certificates (with APS)
+
+<api method="GET" endpoint="/.well-known/est/{aps}/cacerts" />
+
+Retrieve CA certificates for a specific authentication profile.
+
+<ParamField path="aps" type="string" required>
+  EST authentication profile selector
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/prod-devices/cacerts" \
+  --output cacerts.p7b
+```
+
+---
+
+## Simple Enroll
+
+<api method="POST" endpoint="/.well-known/est/simpleenroll" />
+
+Enroll a new device certificate using a Certificate Signing Request (CSR).
+
+<Note>
+  Requires **mutual TLS** authentication with a valid client certificate.
+</Note>
+
+### Request Body
+
+**Content-Type:** `application/pkcs10`
+
+Binary PKCS#10 CSR data.
+
+### Response
+
+Returns the issued certificate in PKCS#7 format.
+
+**Content-Type:** `application/pkcs7-mime`
+
+### Example Request
+
+```bash
+# Generate a CSR
+openssl req -new -key device-key.pem -out device.csr
+
+# Enroll with existing client certificate
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/simpleenroll" \
+  --cert client-cert.pem \
+  --key client-key.pem \
+  --header "Content-Type: application/pkcs10" \
+  --data-binary @device.csr \
+  --output enrolled-cert.p7b
+```
+
+---
+
+## Simple Enroll (with APS)
+
+<api method="POST" endpoint="/.well-known/est/{aps}/simpleenroll" />
+
+Enroll a new device certificate for a specific authentication profile.
+
+<ParamField path="aps" type="string" required>
+  EST authentication profile selector
+</ParamField>
+
+### Request Body
+
+**Content-Type:** `application/pkcs10`
+
+### Example Request
+
+```bash
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/prod-devices/simpleenroll" \
+  --cert client-cert.pem \
+  --key client-key.pem \
+  --header "Content-Type: application/pkcs10" \
+  --data-binary @device.csr \
+  --output enrolled-cert.p7b
+```
+
+---
+
+## Simple Re-enroll
+
+<api method="POST" endpoint="/.well-known/est/simplereenroll" />
+
+Renew an existing device certificate before expiration.
+
+<Note>
+  Requires **mutual TLS** authentication. The client certificate used for authentication will be renewed.
+</Note>
+
+### Request Body
+
+**Content-Type:** `application/pkcs10`
+
+Binary PKCS#10 CSR data for the renewal.
+
+### Response
+
+Returns the renewed certificate in PKCS#7 format.
+
+**Content-Type:** `application/pkcs7-mime`
+
+### Example Request
+
+```bash
+# Generate a new CSR with the same or new key
+openssl req -new -key device-key.pem -out device-renewal.csr
+
+# Re-enroll using existing certificate
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/simplereenroll" \
+  --cert current-cert.pem \
+  --key device-key.pem \
+  --header "Content-Type: application/pkcs10" \
+  --data-binary @device-renewal.csr \
+  --output renewed-cert.p7b
+```
+
+---
+
+## Simple Re-enroll (with APS)
+
+<api method="POST" endpoint="/.well-known/est/{aps}/simplereenroll" />
+
+Renew a certificate for a specific authentication profile.
+
+<ParamField path="aps" type="string" required>
+  EST authentication profile selector
+</ParamField>
+
+### Request Body
+
+**Content-Type:** `application/pkcs10`
+
+### Example Request
+
+```bash
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/prod-devices/simplereenroll" \
+  --cert current-cert.pem \
+  --key device-key.pem \
+  --header "Content-Type: application/pkcs10" \
+  --data-binary @device-renewal.csr \
+  --output renewed-cert.p7b
+```
+
+---
+
+## Server Key Generation
+
+<api method="POST" endpoint="/.well-known/est/serverkeygen" />
+
+Request the server to generate a key pair and issue a certificate. The server returns both the certificate and the encrypted private key.
+
+<Warning>
+  This endpoint is designed for constrained devices that cannot generate their own keys. The private key is transmitted to the device, so proper secure transport is critical.
+</Warning>
+
+<Note>
+  Server key generation must be enabled in the DMS settings for this endpoint to work.
+</Note>
+
+### Request Body
+
+**Content-Type:** `application/pkcs10`
+
+Binary PKCS#10 CSR data (public key will be ignored, server generates new key pair).
+
+### Response
+
+Returns PKCS#7 data containing:
+- The issued certificate
+- The private key (encrypted)
+
+**Content-Type:** `application/pkcs7-mime`
+
+### Example Request
+
+```bash
+# Create a minimal CSR (key will be replaced by server)
+openssl req -new -key temp-key.pem -out serverkeygen.csr
+
+# Request server-generated key
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/serverkeygen" \
+  --cert client-cert.pem \
+  --key client-key.pem \
+  --header "Content-Type: application/pkcs10" \
+  --data-binary @serverkeygen.csr \
+  --output server-generated.p7b
+
+# Extract certificate and private key from response
+openssl pkcs7 -in server-generated.p7b -inform DER -print_certs -out cert.pem
+```
+
+---
+
+## Server Key Generation (with APS)
+
+<api method="POST" endpoint="/.well-known/est/{aps}/serverkeygen" />
+
+Request server key generation for a specific authentication profile.
+
+<ParamField path="aps" type="string" required>
+  EST authentication profile selector
+</ParamField>
+
+### Request Body
+
+**Content-Type:** `application/pkcs10`
+
+### Example Request
+
+```bash
+curl -X POST "https://api.lamassu.io/api/dmsmanager/v1/.well-known/est/prod-devices/serverkeygen" \
+  --cert client-cert.pem \
+  --key client-key.pem \
+  --header "Content-Type: application/pkcs10" \
+  --data-binary @serverkeygen.csr \
+  --output server-generated.p7b
+```
+
+---
+
+## EST Enrollment Workflow
+
+### Initial Device Enrollment
+
+1. **Get CA Certificates** - Device retrieves CA certificates to establish trust
+   ```bash
+   GET /.well-known/est/cacerts
+   ```
+
+2. **Generate Key Pair** - Device generates a key pair (or requests server generation)
+
+3. **Create CSR** - Device creates a Certificate Signing Request
+
+4. **Simple Enroll** - Device submits CSR with authentication
+   ```bash
+   POST /.well-known/est/simpleenroll
+   ```
+
+5. **Store Certificate** - Device stores the issued certificate
+
+### Certificate Renewal
+
+1. **Check Expiration** - Device monitors certificate expiration
+
+2. **Create Renewal CSR** - Device creates a new CSR (can use same or new key)
+
+3. **Simple Re-enroll** - Device submits CSR using current certificate for authentication
+   ```bash
+   POST /.well-known/est/simplereenroll
+   ```
+
+4. **Replace Certificate** - Device replaces old certificate with renewed one
+
+### Constrained Devices (Server Key Generation)
+
+1. **Get CA Certificates**
+   ```bash
+   GET /.well-known/est/cacerts
+   ```
+
+2. **Request Server Key Generation** - Device requests server to generate key pair
+   ```bash
+   POST /.well-known/est/serverkeygen
+   ```
+
+3. **Receive and Store** - Device securely stores both certificate and private key
+
+## EST Response Formats
+
+All EST enrollment responses use **PKCS#7** format (`application/pkcs7-mime`).
+
+To extract certificates from PKCS#7 responses:
+
+```bash
+# Extract certificates
+openssl pkcs7 -in response.p7b -inform DER -print_certs -out certificates.pem
+
+# View certificate details
+openssl x509 -in certificates.pem -text -noout
+```
+
+## Error Handling
+
+EST endpoints return standard HTTP status codes:
+
+- `200 OK` - Enrollment successful
+- `400 Bad Request` - Invalid CSR format or request
+- `401 Unauthorized` - Invalid or missing client certificate
+- `403 Forbidden` - Client certificate valid but not authorized
+- `500 Internal Server Error` - Server-side error during enrollment
+
+Error details are typically returned in the response body.

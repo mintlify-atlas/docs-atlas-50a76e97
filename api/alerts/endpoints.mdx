@@ -1,0 +1,491 @@
+---
+title: 'Alert Endpoints'
+description: 'Event monitoring and subscription management endpoints'
+---
+
+## Get Latest Events
+
+<api method="GET" endpoint="/events/latest" />
+
+Retrieve the latest event per event type, including metadata about when the event was last seen and how many times it has occurred.
+
+### Response
+
+Returns an array of latest events grouped by event type.
+
+<ResponseField name="event_type" type="string">
+  Event type identifier
+</ResponseField>
+
+<ResponseField name="event" type="object">
+  CloudEvent payload for the latest event
+</ResponseField>
+
+<ResponseField name="seen_at" type="string" format="date-time">
+  Timestamp when the event was last seen
+</ResponseField>
+
+<ResponseField name="counter" type="integer">
+  Number of times this event type has occurred
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/alerts/v1/events/latest" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+[
+  {
+    "event_type": "certificate.issued",
+    "event": {
+      "specversion": "1.0",
+      "type": "certificate.issued",
+      "source": "ca-service",
+      "id": "evt-123",
+      "time": "2025-11-08T10:30:00Z",
+      "data": {
+        "certificate_id": "cert-789",
+        "ca_id": "ca-1",
+        "subject": "CN=device-001"
+      }
+    },
+    "seen_at": "2025-11-08T10:30:00Z",
+    "counter": 42
+  },
+  {
+    "event_type": "device.enrolled",
+    "event": {
+      "specversion": "1.0",
+      "type": "device.enrolled",
+      "source": "dms-service",
+      "id": "evt-456",
+      "time": "2025-11-08T09:15:00Z",
+      "data": {
+        "device_id": "device-123",
+        "dms_id": "dms-1"
+      }
+    },
+    "seen_at": "2025-11-08T09:15:00Z",
+    "counter": 15
+  }
+]
+```
+
+---
+
+## List User Subscriptions
+
+<api method="GET" endpoint="/user/{userId}/subscriptions" />
+
+Retrieve all alert subscriptions for a specific user.
+
+<ParamField path="userId" type="string" required>
+  User identifier
+</ParamField>
+
+### Response
+
+Returns an array of subscription objects.
+
+<ResponseField name="id" type="string">
+  Subscription identifier
+</ResponseField>
+
+<ResponseField name="user_id" type="string">
+  User identifier
+</ResponseField>
+
+<ResponseField name="event_type" type="string">
+  Event type this subscription monitors
+</ResponseField>
+
+<ResponseField name="subscription_ts" type="string" format="date-time">
+  Timestamp when subscription was created
+</ResponseField>
+
+<ResponseField name="conditions" type="array">
+  Array of condition objects for filtering events
+  <Expandable title="Condition Object">
+    <ResponseField name="type" type="string">
+      Condition type: `JSON-SCHEMA`, `JSON-PATH`, or `JAVASCRIPT`
+    </ResponseField>
+    <ResponseField name="condition" type="string">
+      Condition expression
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="channel" type="object">
+  Notification channel configuration
+  <Expandable title="Channel Object">
+    <ResponseField name="type" type="string">
+      Channel type: `EMAIL`, `MSTEAMS`, or `WEBHOOK`
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Human-readable channel name
+    </ResponseField>
+    <ResponseField name="config" type="object">
+      Channel-specific configuration (email address, webhook URL, etc.)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/alerts/v1/user/user-123/subscriptions" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+[
+  {
+    "id": "sub-789",
+    "user_id": "user-123",
+    "event_type": "certificate.revoked",
+    "subscription_ts": "2025-11-01T10:00:00Z",
+    "conditions": [
+      {
+        "type": "JSON-PATH",
+        "condition": "$.data.ca_id == 'root-ca-1'"
+      }
+    ],
+    "channel": {
+      "type": "EMAIL",
+      "name": "Security Alerts",
+      "config": {
+        "email": "admin@example.com"
+      }
+    }
+  },
+  {
+    "id": "sub-456",
+    "user_id": "user-123",
+    "event_type": "device.enrolled",
+    "subscription_ts": "2025-10-15T14:30:00Z",
+    "conditions": [],
+    "channel": {
+      "type": "MSTEAMS",
+      "name": "Operations Channel",
+      "config": {
+        "webhook_url": "https://outlook.office.com/webhook/..."
+      }
+    }
+  }
+]
+```
+
+---
+
+## Subscribe to Event Type
+
+<api method="POST" endpoint="/user/{userId}/subscribe" />
+
+Create a new alert subscription for a user.
+
+<ParamField path="userId" type="string" required>
+  User identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="event_type" type="string" required>
+  Event type to subscribe to (e.g., `certificate.issued`, `device.enrolled`, `certificate.expiring`)
+</ParamField>
+
+<ParamField body="conditions" type="array">
+  Optional array of conditions to filter events
+  <Expandable title="Condition Object">
+    <ParamField body="type" type="string" required>
+      Condition type: `JSON-SCHEMA`, `JSON-PATH`, or `JAVASCRIPT`
+    </ParamField>
+    <ParamField body="condition" type="string" required>
+      Condition expression as a string
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="channel" type="object" required>
+  Notification channel configuration
+  <Expandable title="Channel Object">
+    <ParamField body="type" type="string" required>
+      Channel type: `EMAIL`, `MSTEAMS`, or `WEBHOOK`
+    </ParamField>
+    <ParamField body="name" type="string">
+      Human-readable channel name
+    </ParamField>
+    <ParamField body="config" type="object" required>
+      Channel-specific configuration
+      <Expandable title="Email Config">
+        <ParamField body="config.email" type="string" format="email">
+          Email address for notifications (required for EMAIL channel)
+        </ParamField>
+      </Expandable>
+      <Expandable title="MS Teams Config">
+        <ParamField body="config.webhook_url" type="string" format="uri">
+          Microsoft Teams webhook URL (required for MSTEAMS channel)
+        </ParamField>
+      </Expandable>
+      <Expandable title="Webhook Config">
+        <ParamField body="config.webhook_url" type="string" format="uri">
+          Webhook endpoint URL (required for WEBHOOK channel)
+        </ParamField>
+        <ParamField body="config.webhook_method" type="string">
+          HTTP method: `GET`, `POST`, `PUT`, `PATCH`, or `DELETE` (default: `POST`)
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+Returns the updated list of all subscriptions for the user.
+
+### Example Request - Simple Email Subscription
+
+```bash
+curl -X POST "https://api.lamassu.io/api/alerts/v1/user/user-123/subscribe" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_type": "certificate.expiring",
+    "channel": {
+      "type": "EMAIL",
+      "name": "Certificate Expiration Alerts",
+      "config": {
+        "email": "admin@example.com"
+      }
+    }
+  }'
+```
+
+### Example Request - Conditional MS Teams Subscription
+
+```bash
+curl -X POST "https://api.lamassu.io/api/alerts/v1/user/user-123/subscribe" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_type": "certificate.revoked",
+    "conditions": [
+      {
+        "type": "JSON-PATH",
+        "condition": "$.data.ca_id == '"'"'root-ca-1'"'"'"
+      }
+    ],
+    "channel": {
+      "type": "MSTEAMS",
+      "name": "Critical Security Alerts",
+      "config": {
+        "webhook_url": "https://outlook.office.com/webhook/abc123..."
+      }
+    }
+  }'
+```
+
+### Example Request - Webhook with JavaScript Filter
+
+```bash
+curl -X POST "https://api.lamassu.io/api/alerts/v1/user/user-123/subscribe" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_type": "device.enrolled",
+    "conditions": [
+      {
+        "type": "JAVASCRIPT",
+        "condition": "event.data.tags && event.data.tags.includes('"'"'production'"'"') && event.data.metadata.region === '"'"'us-east-1'"'"'"
+      }
+    ],
+    "channel": {
+      "type": "WEBHOOK",
+      "name": "Custom Integration",
+      "config": {
+        "webhook_url": "https://api.example.com/alerts/device-enrolled",
+        "webhook_method": "POST"
+      }
+    }
+  }'
+```
+
+---
+
+## Unsubscribe from Event
+
+<api method="POST" endpoint="/user/{userId}/unsubscribe/{subId}" />
+
+Remove an alert subscription.
+
+<ParamField path="userId" type="string" required>
+  User identifier
+</ParamField>
+
+<ParamField path="subId" type="string" required>
+  Subscription identifier
+</ParamField>
+
+### Response
+
+Returns the updated list of all subscriptions for the user.
+
+### Example Request
+
+```bash
+curl -X POST "https://api.lamassu.io/api/alerts/v1/user/user-123/unsubscribe/sub-789" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Condition Types Reference
+
+### JSON Schema
+
+Validate event payload against a JSON Schema. The condition should be a JSON Schema object as a string.
+
+**Example**: Only notify if severity is critical or high
+
+```json
+{
+  "type": "JSON-SCHEMA",
+  "condition": "{\"type\":\"object\",\"properties\":{\"severity\":{\"enum\":[\"critical\",\"high\"]}}}"
+}
+```
+
+### JSONPath
+
+Use JSONPath expressions to filter events. The condition should evaluate to a boolean or match a value.
+
+**Example**: Only notify for specific CA
+
+```json
+{
+  "type": "JSON-PATH",
+  "condition": "$.data.ca_id == 'root-ca-1'"
+}
+```
+
+**Example**: Only notify if count exceeds threshold
+
+```json
+{
+  "type": "JSON-PATH",
+  "condition": "$.data.failed_attempts > 5"
+}
+```
+
+### JavaScript
+
+Use JavaScript expressions for complex filtering logic. The event is available as the `event` variable.
+
+**Example**: Multiple conditions
+
+```json
+{
+  "type": "JAVASCRIPT",
+  "condition": "event.data.tags.includes('production') && event.data.severity === 'critical'"
+}
+```
+
+**Example**: Time-based filtering
+
+```json
+{
+  "type": "JAVASCRIPT",
+  "condition": "new Date(event.time).getHours() >= 9 && new Date(event.time).getHours() <= 17"
+}
+```
+
+---
+
+## Channel Configuration Examples
+
+### Email Channel
+
+```json
+{
+  "type": "EMAIL",
+  "name": "Admin Notifications",
+  "config": {
+    "email": "admin@example.com"
+  }
+}
+```
+
+### Microsoft Teams Channel
+
+1. Create an Incoming Webhook in your Teams channel
+2. Copy the webhook URL
+3. Configure the channel:
+
+```json
+{
+  "type": "MSTEAMS",
+  "name": "Security Team Channel",
+  "config": {
+    "webhook_url": "https://outlook.office.com/webhook/abc-123-def-456/IncomingWebhook/xyz-789/uuid"
+  }
+}
+```
+
+### Webhook Channel (POST)
+
+```json
+{
+  "type": "WEBHOOK",
+  "name": "Custom API Integration",
+  "config": {
+    "webhook_url": "https://api.example.com/alerts",
+    "webhook_method": "POST"
+  }
+}
+```
+
+### Webhook Channel (GET)
+
+```json
+{
+  "type": "WEBHOOK",
+  "name": "Trigger External System",
+  "config": {
+    "webhook_url": "https://api.example.com/trigger?event={event_type}",
+    "webhook_method": "GET"
+  }
+}
+```
+
+---
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Conditions to Reduce Noise">
+    Instead of receiving notifications for every event, use conditions to filter only critical or relevant events. This prevents alert fatigue and ensures important notifications don't get missed.
+  </Accordion>
+
+  <Accordion title="Test Subscriptions with Non-Critical Events">
+    Before subscribing to critical events, test your channel configuration with less critical event types to ensure notifications are delivered correctly.
+  </Accordion>
+
+  <Accordion title="Choose the Right Channel">
+    - **Email**: Good for alerts that can be handled asynchronously
+    - **MS Teams**: Best for team notifications and collaboration
+    - **Webhooks**: Ideal for automated responses and integrations
+  </Accordion>
+
+  <Accordion title="Monitor Subscription Health">
+    Regularly review your subscriptions to ensure they're still relevant and that channel configurations (webhook URLs, email addresses) are up to date.
+  </Accordion>
+
+  <Accordion title="Combine Multiple Conditions">
+    Use JavaScript conditions to combine multiple filters for precise control over which events trigger notifications.
+  </Accordion>
+</AccordionGroup>

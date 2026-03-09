@@ -1,0 +1,619 @@
+---
+title: 'System Architecture'
+description: 'Understanding Lamassu IoT platform architecture and components'
+icon: 'diagram-project'
+---
+
+Lamassu IoT is built as a modular, cloud-native PKI platform designed for IoT and industrial environments. This page provides an overview of the system architecture, core components, and how they work together.
+
+## Architecture Overview
+
+Lamassu follows a microservices architecture with pluggable engines for storage, cryptography, and messaging. Services can be deployed as a monolithic application for development or as independent microservices in production.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Lamassu IoT Platform                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│  │    CA    │  │   KMS    │  │ DevMgr   │  │   DMS    │  │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
+│                                                             │
+│  ┌──────────┐  ┌──────────┐                               │
+│  │    VA    │  │  Alerts  │                               │
+│  └──────────┘  └──────────┘                               │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│                  Pluggable Engines                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Storage       Event Bus        Crypto Engines              │
+│  ┌──────┐      ┌────────┐      ┌────────────────┐         │
+│  │ PSQL │      │ AMQP   │      │ Software       │         │
+│  │SQLite│      │AWS SNS │      │ AWS KMS        │         │
+│  └──────┘      └────────┘      │ Vault KV       │         │
+│                                 │ PKCS#11 (HSM)  │         │
+│                                 │ Filesystem     │         │
+│                                 └────────────────┘         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Core Services
+
+Lamassu consists of six main backend services, each responsible for specific PKI operations:
+
+### Certificate Authority (CA)
+
+The CA service is the heart of Lamassu, managing the certificate hierarchy and issuance operations.
+
+**Responsibilities:**
+- Create and manage Certificate Authorities
+- Issue, renew, and revoke certificates
+- Generate and maintain Certificate Revocation Lists (CRLs)
+- Manage issuance profiles for different certificate types
+- Track certificate lifecycle and expiration
+
+**Key Features:**
+- Multi-level CA hierarchies
+- Automated certificate monitoring
+- Policy-based issuance with validation
+- OCSP and CRL support
+
+**Implementation:** `/home/daytona/workspace/source/backend/pkg/services/ca.go:1`
+
+### Key Management Service (KMS)
+
+Manages cryptographic keys across multiple storage backends with a unified interface.
+
+**Responsibilities:**
+- Create and import cryptographic keys
+- Support multiple crypto engines (AWS KMS, Vault, HSM, filesystem)
+- Provide signing operations without exposing private keys
+- Track key metadata and usage statistics
+
+**Supported Key Types:**
+- RSA (2048, 3072, 4096 bits)
+- ECDSA (P-224, P-256, P-384, P-521)
+
+**Crypto Engine Providers:**
+- **Software** - In-memory key generation and storage
+- **Filesystem** - File-based key storage
+- **AWS KMS** - AWS Key Management Service integration
+- **AWS Secrets Manager** - AWS Secrets Manager for key storage
+- **HashiCorp Vault** - Vault KV v2 secrets engine
+- **PKCS#11** - Hardware Security Module (HSM) support
+
+**Implementation:** `/home/daytona/workspace/source/backend/pkg/services/kms.go:1`
+
+### Device Manager
+
+Tracks IoT devices and their certificate-based identities.
+
+**Responsibilities:**
+- Register and manage IoT device inventory
+- Track device identity certificates and renewal status
+- Monitor device lifecycle states
+- Organize devices into logical groups
+- Generate device statistics and health metrics
+
+**Device States:**
+- `NO_IDENTITY` - Device registered but no certificate
+- `ACTIVE` - Device has valid certificate
+- `RENEWAL_WINDOW` - Certificate approaching expiration
+- `ABOUT_TO_EXPIRE` - Certificate expiring soon
+- `EXPIRED` - Certificate has expired
+- `REVOKED` - Certificate was revoked
+- `DECOMMISSIONED` - Device removed from service
+
+**Implementation:** `/home/daytona/workspace/source/backend/pkg/services/devicemanager.go:1`
+
+### Device Manufacturing System (DMS) Manager
+
+Manages enrollment protocols and device onboarding workflows.
+
+**Responsibilities:**
+- Configure and manage DMS instances
+- Support EST (Enrollment over Secure Transport) protocol
+- Handle device enrollment and re-enrollment
+- Bind devices to DMSs for automated certificate issuance
+- Manage downstream certificate delegation
+
+**Enrollment Protocols:**
+- **EST (RFC 7030)** - Standard enrollment protocol
+- Server-side key generation
+- CSR-based enrollment
+- Certificate renewal and re-enrollment
+
+**Implementation:** `/home/daytona/workspace/source/backend/pkg/services/dmsmanager.go:1`
+
+### Validation Authority (VA)
+
+Provides certificate validation services using OCSP and CRL protocols.
+
+**Responsibilities:**
+- OCSP responder for real-time certificate validation
+- CRL distribution and hosting
+- Maintain revocation status database
+- Serve validation requests over HTTP
+
+**Protocols:**
+- **OCSP (RFC 6960)** - Online Certificate Status Protocol
+- **CRL** - Certificate Revocation List distribution
+
+**Storage:**
+- File-based storage for CRL and OCSP response caching
+- Supports local filesystem and S3-compatible storage
+
+### Alerts Service
+
+Event-driven notification and alerting system for monitoring PKI operations.
+
+**Responsibilities:**
+- Subscribe to system events across all services
+- Filter events based on user-defined conditions
+- Send notifications through multiple channels
+- Track event history and statistics
+
+**Event Filtering:**
+- JSONPath expressions
+- JSON Schema validation
+- JavaScript conditions
+
+**Notification Channels:**
+- Webhook callbacks
+- Email (SMTP)
+- Microsoft Teams
+
+**Implementation:** `/home/daytona/workspace/source/backend/pkg/services/alerts.go:1`
+
+## Pluggable Engines
+
+Lamassu's modularity comes from its pluggable engine architecture. Each subsystem can be swapped based on deployment requirements.
+
+### Storage Engines
+
+Persistent storage for all Lamassu data.
+
+<Tabs>
+  <Tab title="PostgreSQL">
+    Production-grade relational database with full ACID compliance.
+
+    **Features:**
+    - Full-text search
+    - JSON/JSONB support for metadata
+    - Efficient indexing for queries
+    - Migration support with version tracking
+
+    **Configuration:**
+    ```yaml
+    storage:
+      provider: postgres
+      config:
+        hostname: localhost
+        port: 5432
+        username: lamassu
+        password: secret
+        database: lamassu
+    ```
+
+    **Implementation:** `engines/storage/postgres/`
+  </Tab>
+
+  <Tab title="SQLite">
+    Embedded database for development and testing.
+
+    **Features:**
+    - Zero configuration
+    - In-memory or file-based
+    - Perfect for local development
+
+    **Configuration:**
+    ```yaml
+    storage:
+      provider: sqlite
+      config:
+        path: "file::memory:?cache=shared"
+    ```
+
+    **Note:** SQLite is registered in the monolithic development launcher for easy local testing.
+  </Tab>
+</Tabs>
+
+### Event Bus Engines
+
+Asynchronous messaging for event-driven architecture.
+
+<Tabs>
+  <Tab title="AMQP (RabbitMQ)">
+    Production event bus using RabbitMQ.
+
+    **Features:**
+    - Reliable message delivery
+    - Topic-based routing
+    - Dead-letter queue support
+    - Management UI for monitoring
+
+    **Configuration:**
+    ```yaml
+    event_bus:
+      enabled: true
+      provider: amqp
+      config:
+        host: localhost
+        port: 5672
+        basic_auth:
+          username: guest
+          password: guest
+        exchange: lamassu
+    ```
+
+    **Implementation:** `engines/eventbus/amqp/`
+  </Tab>
+
+  <Tab title="AWS SNS/SQS">
+    Cloud-native event bus for AWS deployments.
+
+    **Features:**
+    - Fully managed service
+    - Scalable message handling
+    - Integration with AWS ecosystem
+
+    **Configuration:**
+    ```yaml
+    event_bus:
+      enabled: true
+      provider: aws-sqs-sns
+      config:
+        region: us-east-1
+        access_key_id: AKIAIOSFODNN7EXAMPLE
+        secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    ```
+
+    **Implementation:** `engines/eventbus/aws/`
+  </Tab>
+
+  <Tab title="In-Memory">
+    Ephemeral event bus for development.
+
+    **Features:**
+    - No Docker required
+    - Fast local testing
+    - No persistence
+
+    **Usage:**
+    ```bash
+    go run ./monolithic/cmd/development/main.go --inmemory-eventbus
+    ```
+
+    **Implementation:** `monolithic/pkg/eventbus/inmemory/`
+  </Tab>
+</Tabs>
+
+### Crypto Engines
+
+Flexible key storage and cryptographic operations.
+
+<AccordionGroup>
+  <Accordion title="Software Crypto Engine">
+    Pure Go implementation for key generation and signing.
+
+    **Use Cases:**
+    - Testing and development
+    - Non-production environments
+    - Offline PKI operations
+
+    **Implementation:** `engines/crypto/software/`
+  </Accordion>
+
+  <Accordion title="Filesystem Crypto Engine">
+    File-based key storage with PEM encoding.
+
+    **Use Cases:**
+    - Development and testing
+    - Simple deployments
+    - Key backup and portability
+
+    **Configuration:**
+    ```yaml
+    crypto_engines:
+      - id: filesystem-1
+        type: filesystem
+        config:
+          storage_directory: /var/lamassu/keys
+    ```
+
+    **Implementation:** `engines/crypto/filesystem/`
+  </Accordion>
+
+  <Accordion title="AWS KMS Crypto Engine">
+    Integration with AWS Key Management Service.
+
+    **Use Cases:**
+    - Cloud deployments on AWS
+    - Compliance requirements
+    - Managed key lifecycle
+
+    **Features:**
+    - FIPS 140-2 Level 2 validated
+    - Automatic key rotation
+    - CloudTrail audit logging
+
+    **Configuration:**
+    ```yaml
+    crypto_engines:
+      - id: aws-kms-1
+        type: aws-kms
+        config:
+          region: us-east-1
+          access_key_id: AKIAIOSFODNN7EXAMPLE
+          secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    ```
+
+    **Implementation:** `engines/crypto/aws/awskms.go:1`
+  </Accordion>
+
+  <Accordion title="AWS Secrets Manager Crypto Engine">
+    Store keys as secrets in AWS Secrets Manager.
+
+    **Use Cases:**
+    - AWS-native secret management
+    - Centralized key storage
+    - Integration with AWS IAM
+
+    **Implementation:** `engines/crypto/aws/secretsmanager.go:1`
+  </Accordion>
+
+  <Accordion title="HashiCorp Vault Crypto Engine">
+    Integration with Vault KV v2 secrets engine.
+
+    **Use Cases:**
+    - Multi-cloud deployments
+    - On-premises environments
+    - Advanced secret management
+
+    **Features:**
+    - Versioned secrets
+    - Dynamic secret generation
+    - Comprehensive audit logging
+
+    **Configuration:**
+    ```yaml
+    crypto_engines:
+      - id: vault-1
+        type: vault-kv2
+        config:
+          address: http://vault:8200
+          token: s.VAULT_TOKEN_HERE
+          mount: secret
+    ```
+
+    **Implementation:** `engines/crypto/vaultkv2/`
+  </Accordion>
+
+  <Accordion title="PKCS#11 Crypto Engine (HSM)">
+    Hardware Security Module integration via PKCS#11 interface.
+
+    **Use Cases:**
+    - High-security environments
+    - Compliance requirements (FIPS 140-2 Level 3/4)
+    - Root CA key protection
+
+    **Supported HSMs:**
+    - Thales Luna HSM
+    - Gemalto SafeNet
+    - SoftHSM (testing)
+    - YubiHSM
+
+    **Configuration:**
+    ```yaml
+    crypto_engines:
+      - id: hsm-1
+        type: pkcs11
+        config:
+          module_path: /usr/lib/softhsm/libsofthsm2.so
+          pin: 1234
+          slot: 0
+    ```
+
+    **Usage:**
+    ```bash
+    go run ./monolithic/cmd/development/main.go \
+      --cryptoengines=pkcs11 \
+      --hsm-module-path=/usr/lib/softhsm/libsofthsm2.so
+    ```
+
+    **Implementation:** `engines/crypto/pkcs11/`
+  </Accordion>
+</AccordionGroup>
+
+## Deployment Modes
+
+Lamassu supports two deployment modes based on your needs:
+
+### Monolithic Mode
+
+All services run in a single process, ideal for development and small deployments.
+
+**Characteristics:**
+- Single executable
+- Simplified deployment
+- Shared resources
+- Built-in API gateway
+
+**Assembly Modes:**
+
+<CodeGroup>
+```go In-Memory Assembly
+// Services communicate via direct function calls
+AssemblyMode: InMemory
+```
+
+```go HTTP Assembly
+// Services communicate via HTTP SDKs
+AssemblyMode: Http
+```
+</CodeGroup>
+
+**Source:** `/home/daytona/workspace/source/monolithic/pkg/config.go:8`
+
+### Microservices Mode
+
+Each service deployed independently, ideal for production and Kubernetes.
+
+**Characteristics:**
+- Independent scaling
+- Service isolation
+- Kubernetes-native
+- High availability
+
+**Deployment:**
+- Helm charts available at [lamassuiot/lamassu-helm](https://github.com/lamassuiot/lamassu-helm)
+- Service mesh integration (Istio, Linkerd)
+- Horizontal pod autoscaling
+
+## Repository Structure
+
+The Lamassu codebase is organized as a Go workspace with multiple modules:
+
+```
+lamassuiot/
+├── backend/          # Core services (CA, KMS, Device Manager, etc.)
+├── connectors/       # Cloud integrations (AWS IoT, etc.)
+├── core/            # Shared domain models and interfaces
+├── engines/         # Pluggable engine implementations
+│   ├── crypto/      # Crypto engines (AWS, Vault, PKCS#11, etc.)
+│   ├── eventbus/    # Event bus engines (AMQP, AWS SNS/SQS)
+│   ├── storage/     # Storage engines (PostgreSQL)
+│   └── fs-storage/  # File storage (Local, S3)
+├── sdk/             # Language SDKs for API access
+├── shared/          # Common utilities and helpers
+├── monolithic/      # Monolithic deployment launcher
+├── ci/              # CI/CD workflows and scripts
+└── go.work          # Go workspace configuration
+```
+
+**Workspace Configuration:** `/home/daytona/workspace/source/go.work:1`
+
+The `go.work` file coordinates 24 modules, enabling local development while allowing external consumers to use tagged versions from GitHub.
+
+## API Gateway
+
+In monolithic mode, Lamassu includes an integrated API gateway that routes requests to backend services.
+
+**Service Routes:**
+
+| Service | Path | Description |
+|---------|------|-------------|
+| CA | `/api/ca` | Certificate Authority operations |
+| KMS | `/api/kms` | Key management and crypto engines |
+| Device Manager | `/api/devmanager` | Device inventory and tracking |
+| DMS Manager | `/api/dmsmanager` | Enrollment systems |
+| VA | `/api/va` | OCSP and CRL validation |
+| Alerts | `/api/alerts` | Event subscriptions and notifications |
+| EST | `/api/.well-known/est` | EST protocol endpoint |
+
+**Implementation:** The gateway uses reverse proxies to route HTTP requests to internal service ports in HTTP assembly mode.
+
+## Event-Driven Architecture
+
+Lamassu services communicate asynchronously through an event bus, enabling:
+
+**Event Flow:**
+
+1. **Publishers** - Services emit events when state changes occur
+2. **Event Bus** - Routes events to interested subscribers
+3. **Subscribers** - Services and Alerts consume relevant events
+4. **Dead Letter Queue** - Failed events are moved to DLQ for retry
+
+**Example Events:**
+- CA certificate issued
+- Certificate about to expire
+- Device identity revoked
+- Key created in KMS
+- DMS enrollment completed
+
+**Event Processing:**
+- Alerts service filters and routes notifications
+- Services update state based on cross-service events
+- Monitoring systems track system health
+
+## Cloud Connectors
+
+Lamassu integrates with cloud IoT platforms through connectors:
+
+### AWS IoT Core Connector
+
+Synchronizes Lamassu devices and certificates with AWS IoT Core.
+
+**Features:**
+- Automatic device registration in AWS IoT
+- Certificate synchronization
+- IoT policy management
+- Thing group organization
+
+**Configuration:**
+```bash
+go run ./monolithic/cmd/development/main.go \
+  --awsiot \
+  --awsiot-id=my-aws-connector \
+  --awsiot-keyid=AKIAIOSFODNN7EXAMPLE \
+  --awsiot-keysecret=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
+  --awsiot-region=us-east-1
+```
+
+**Implementation:** `/home/daytona/workspace/source/monolithic/pkg/assembler_awsiot.go:1`
+
+## Security Considerations
+
+<Warning>
+  The development mode uses self-signed certificates and default credentials. Never use development mode in production.
+</Warning>
+
+**Production Security:**
+- Use HSM-backed crypto engines for root CAs
+- Enable TLS for all service communication
+- Implement mutual TLS (mTLS) authentication
+- Use secrets management for credentials
+- Enable audit logging to external SIEM
+- Restrict network access with firewall rules
+- Regular security updates and patching
+
+## Monitoring and Observability
+
+Lamassu supports OpenTelemetry for comprehensive observability:
+
+**Telemetry Features:**
+- **Metrics** - Service health, operation counts, performance
+- **Traces** - Distributed tracing across service calls
+- **Logs** - Structured logging with configurable levels
+
+**Configuration:**
+```yaml
+otel:
+  metrics:
+    enabled: true
+    exporter: prometheus
+  traces:
+    enabled: true
+    exporter: jaeger
+  logging:
+    enabled: true
+    level: info
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Get Lamassu running locally in minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/certificate-authorities">
+    Deep dive into PKI concepts and Lamassu models
+  </Card>
+  <Card title="Production Deployment" icon="server" href="/deployment/overview">
+    Deploy to Kubernetes with Helm charts
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the REST API documentation
+  </Card>
+</CardGroup>

@@ -1,0 +1,571 @@
+---
+title: 'AWS IoT Core Connector'
+description: 'Synchronize Lamassu devices with AWS IoT Core for cloud-connected IoT deployments'
+---
+
+## Overview
+
+The AWS IoT Core connector enables bidirectional synchronization between Lamassu and AWS IoT:
+
+- **Device Registration** - Create IoT Things from Lamassu devices
+- **Certificate Management** - Register device certificates with AWS IoT
+- **Shadow Updates** - Push device state and remediation actions
+- **CA Registration** - Register Lamassu CAs as AWS IoT CA certificates
+- **JITP (Just-In-Time Provisioning)** - Automatic device onboarding
+- **Event Handling** - React to Lamassu lifecycle events
+
+**Import Path:**
+```go
+import "github.com/lamassuiot/lamassuiot/connectors/awsiot/v3/pkg"
+```
+
+## Architecture
+
+```
+┌─────────────────┐      Events      ┌──────────────────┐
+│  Lamassu CA     │──────────────────▶│  AWS IoT         │
+│  DMS Manager    │                   │  Connector       │
+│  Device Manager │◀──────────────────│                  │
+└─────────────────┘      Updates      └──────────────────┘
+                                              │
+                                              │ AWS SDK
+                                              ▼
+                                       ┌──────────────────┐
+                                       │  AWS IoT Core    │
+                                       │  - Things        │
+                                       │  - Certificates  │
+                                       │  - Policies      │
+                                       │  - Shadows       │
+                                       └──────────────────┘
+```
+
+## Configuration
+
+```yaml
+connector:
+  connector_id: aws-iot-prod
+  
+  # AWS credentials
+  aws_config:
+    aws_region: us-east-1
+    aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+    aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+  
+  # Bidirectional queue for commands
+  aws_bidirectional_queue_name: lamassu-iot-commands
+  
+  # Event bus for Lamassu events
+  subscriber_event_bus:
+    provider: amqp
+    config:
+      hostname: rabbitmq.example.com
+      port: 5672
+      exchange: lamassu-events
+  
+  # Dead letter queue
+  subscriber_dlq_event_bus:
+    provider: amqp
+    config:
+      hostname: rabbitmq.example.com
+      port: 5672
+      exchange: lamassu-dlq
+  
+  # Lamassu service clients
+  ca_client:
+    base_url: https://ca.lamassu.io
+    tls_config:
+      insecure_skip_verify: false
+  
+  device_manager_client:
+    base_url: https://device-manager.lamassu.io
+  
+  dms_manager_client:
+    base_url: https://dms-manager.lamassu.io
+```
+
+**Config Struct:**
+```go
+type ConnectorServiceConfig struct {
+    Logs                  cconfig.Logging
+    SubscriberEventBus    cconfig.EventBusEngine
+    SubscriberDLQEventBus cconfig.EventBusEngine
+    
+    DMSManagerClient struct {
+        cconfig.HTTPClient
+    }
+    
+    DevManagerClient struct {
+        cconfig.HTTPClient
+    }
+    
+    CAClient struct {
+        cconfig.HTTPClient
+    }
+    
+    ConnectorID               string
+    AWSSDKConfig              laws.AWSSDKConfig
+    AWSBidirectionalQueueName string
+}
+```
+
+## CA Registration
+
+Register Lamassu CAs with AWS IoT to enable certificate validation.
+
+### Primary Account Registration
+
+For the AWS account owning the IoT Core endpoint:
+
+```bash
+# Via Lamassu API
+curl -X POST https://dms.lamassu.io/v1/cas/root-ca/register-aws \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "connector_id": "aws-iot-prod",
+    "primary_account": true
+  }'
+```
+
+**Process:**
+1. Connector generates verification CSR with AWS registration code
+2. Signs CSR with Lamassu CA
+3. Registers CA with verification certificate
+4. Updates Lamassu CA metadata with AWS ARN
+
+**Metadata Added:**
+```json
+{
+  "connectors.lamassu.io/aws-iot-prod": {
+    "account": "123456789012",
+    "region": "us-east-1",
+    "arn": "arn:aws:iot:us-east-1:123456789012:cacert/abc123",
+    "certificate_id": "abc123...",
+    "iot_core_mqtt_endpoint": "a1b2c3d4e5f6g7.iot.us-east-1.amazonaws.com",
+    "registration": {
+      "status": "succeeded",
+      "registration_time": "2024-01-15T10:00:00Z",
+      "primary_account": true
+    }
+  }
+}
+```
+
+### Multi-Account Registration (SNI)
+
+For additional AWS accounts:
+
+```bash
+curl -X POST https://dms.lamassu.io/v1/cas/root-ca/register-aws \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "connector_id": "aws-iot-prod",
+    "primary_account": false
+  }'
+```
+
+Uses SNI-only mode (no verification certificate required).
+
+**Source:** `connectors/awsiot/pkg/service.go:692`
+
+## Device Registration
+
+### Automatic Registration (Event-Driven)
+
+The connector listens for `device.identity.bound` events:
+
+```go
+func (svc *Service) HandleDeviceIdentityBound(ctx context.Context, event Event) error {
+    // 1. Get DMS automation config
+    dms, _ := svc.GetDMSService().GetDMSByID(ctx, event.DeviceID)
+    
+    var iotConfig IotAWSDMSMetadata
+    hasConfig := metadata.Get(dms.Metadata, AWSIoTMetadataKey(connectorID), &iotConfig)
+    
+    if !hasConfig {
+        return nil  // DMS not configured for AWS IoT
+    }
+    
+    // 2. Register Thing and attach certificate
+    err := svc.RegisterAndAttachThing(ctx, RegisterAndAttachThingInput{
+        DeviceID: event.DeviceID,
+        BindedIdentity: event.BindedIdentity,
+        DMSIoTAutomationConfig: iotConfig,
+    })
+    
+    return err
+}
+```
+
+### Manual Registration
+
+```bash
+curl -X POST https://device-manager.lamassu.io/v1/devices/device-001/register-aws \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "connector_id": "aws-iot-prod"
+  }'
+```
+
+### Registration Process
+
+1. **Create/Update Policies**
+   ```go
+   svc.RegisterUpdatePolicies(ctx, RegisterUpdatePoliciesInput{
+       Policies: dmsConfig.Policies,
+   })
+   ```
+
+2. **Create Thing Groups**
+   ```go
+   svc.RegisterGroups(ctx, RegisterGroupsInput{
+       Groups: dmsConfig.GroupNames,
+   })
+   ```
+
+3. **Revoke Old Certificates**
+   - Lists all certificates attached to Thing
+   - Revokes previous certificates
+
+4. **Register via Provisioning Template**
+   ```go
+   template := map[string]any{
+       "Parameters": map[string]any{
+           "ThingName": {"Type": "String"},
+           "LamassuCertificate": {"Type": "String"},
+           "LamassuCACertificatePem": {"Type": "String"},
+       },
+       "Resources": map[string]any{
+           "thing": {
+               "Type": "AWS::IoT::Thing",
+               "Properties": {
+                   "ThingName": {"Ref": "ThingName"},
+                   "ThingGroups": dmsConfig.GroupNames,
+               },
+           },
+           "certificate": {
+               "Type": "AWS::IoT::Certificate",
+               "Properties": {
+                   "CACertificatePem": {"Ref": "LamassuCACertificatePem"},
+                   "CertificatePem": {"Ref": "LamassuCertificate"},
+               },
+           },
+       },
+   }
+   
+   registrationOutput, _ := iotSDK.RegisterThing(ctx, &iot.RegisterThingInput{
+       TemplateBody: aws.String(templateJSON),
+       Parameters: params,
+   })
+   ```
+
+5. **Update Metadata**
+   - Adds AWS certificate ARN to Lamassu certificate metadata
+   - Marks device as registered in AWS IoT
+
+**Source:** `connectors/awsiot/pkg/service.go:222`
+
+## Shadow Management
+
+Update device shadows with remediation actions based on certificate status.
+
+### Configuration (DMS Level)
+
+```json
+{
+  "connectors.lamassu.io/aws-iot-prod": {
+    "shadow_config": {
+      "enable": true,
+      "shadow_name": "lamassu"  // Empty = classic shadow
+    },
+    "policies": [...],
+    "group_names": ["production-devices"]
+  }
+}
+```
+
+### Shadow Update Process
+
+```go
+func (svc *Service) UpdateDeviceShadow(ctx context.Context, input UpdateDeviceShadowInput) error {
+    // 1. Get current shadow
+    shadow, err := iotdataplaneSDK.GetThingShadow(ctx, &iotdataplane.GetThingShadowInput{
+        ThingName: &input.DeviceID,
+        ShadowName: &shadowName,
+    })
+    
+    // 2. Update desired state
+    shadowState.Desired["identity_actions"] = map[string]int{
+        "revoke": timestamp,
+        "rotate": timestamp,
+        "disconnect": timestamp,
+    }
+    
+    // 3. Publish shadow update
+    _, err = iotdataplaneSDK.UpdateThingShadow(ctx, &iotdataplane.UpdateThingShadowInput{
+        ThingName: &input.DeviceID,
+        Payload: shadowJSON,
+    })
+    
+    return err
+}
+```
+
+### Shadow Document
+
+```json
+{
+  "state": {
+    "desired": {
+      "identity_actions": {
+        "revoke": 1705315200000,
+        "disconnect": 1705315200000
+      }
+    },
+    "reported": {
+      "connected": true,
+      "last_seen": 1705315000000
+    }
+  },
+  "metadata": {
+    "desired": {
+      "identity_actions": {
+        "revoke": {"timestamp": 1705315200},
+        "disconnect": {"timestamp": 1705315200}
+      }
+    }
+  },
+  "version": 42,
+  "timestamp": 1705315200
+}
+```
+
+**Source:** `connectors/awsiot/pkg/service.go:462`
+
+## Just-In-Time Provisioning (JITP)
+
+Automatically provision devices when they first connect to AWS IoT.
+
+### DMS Configuration
+
+```json
+{
+  "connectors.lamassu.io/aws-iot-prod": {
+    "jitp_provisioning_template": {
+      "enable_template": true,
+      "aws_ca_certificate_id": "abc123...",
+      "provisioning_role_arn": "arn:aws:iam::123456789012:role/JITPRole"
+    },
+    "policies": [
+      {
+        "policy_name": "DevicePolicy",
+        "policy_document": "{...}"
+      }
+    ],
+    "group_names": ["jitp-devices"]
+  }
+}
+```
+
+### Template Creation
+
+```go
+template := {
+    "Parameters": {
+        "AWS::IoT::Certificate::CommonName": {"Type": "String"},
+        "AWS::IoT::Certificate::Organization": {"Type": "String"},
+    },
+    "Resources": {
+        "thing": {
+            "Type": "AWS::IoT::Thing",
+            "Properties": {
+                "ThingName": {"Ref": "AWS::IoT::Certificate::CommonName"},
+                "ThingGroups": ["jitp-devices"],
+            },
+        },
+        "certificate": {
+            "Type": "AWS::IoT::Certificate",
+            "Properties": {
+                "CertificateId": {"Ref": "AWS::IoT::Certificate::Id"},
+                "Status": "ACTIVE",
+            },
+        },
+        "DevicePolicy": {
+            "Type": "AWS::IoT::Policy",
+            "Properties": {
+                "PolicyName": "DevicePolicy",
+            },
+        },
+    },
+}
+
+_, err := iotSDK.CreateProvisioningTemplate(ctx, &iot.CreateProvisioningTemplateInput{
+    ProvisioningRoleArn: &roleARN,
+    TemplateBody: &templateJSON,
+    TemplateName: &dmsID,
+    Enabled: aws.Bool(true),
+    Type: types.TemplateTypeJitp,
+})
+```
+
+**Source:** `connectors/awsiot/pkg/service.go:952`
+
+## IAM Permissions
+
+### Connector Service Role
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iot:RegisterCACertificate",
+        "iot:DescribeCACertificate",
+        "iot:UpdateCACertificate",
+        "iot:RegisterThing",
+        "iot:DescribeThing",
+        "iot:UpdateCertificate",
+        "iot:CreatePolicy",
+        "iot:GetPolicy",
+        "iot:CreatePolicyVersion",
+        "iot:CreateThingGroup",
+        "iot:CreateProvisioningTemplate",
+        "iot:UpdateProvisioningTemplate"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iot:GetThingShadow",
+        "iot:UpdateThingShadow"
+      ],
+      "Resource": "arn:aws:iot:*:*:thing/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:SendMessage"
+      ],
+      "Resource": "arn:aws:sqs:*:*:lamassu-*"
+    }
+  ]
+}
+```
+
+### JITP Provisioning Role
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iot:CreateThing",
+        "iot:UpdateThing",
+        "iot:DescribeThing",
+        "iot:AttachThingPrincipal",
+        "iot:AttachPolicy",
+        "iot:UpdateCertificate"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+## Monitoring
+
+### Metrics
+
+```prometheus
+# Devices registered
+lamassu_aws_iot_devices_registered_total 42
+
+# Shadow updates
+lamassu_aws_iot_shadow_updates_total{device="device-001"} 15
+
+# Certificate status updates
+lamassu_aws_iot_cert_status_updates_total{status="revoked"} 3
+
+# Event processing errors
+lamassu_aws_iot_event_errors_total{event_type="device.registered"} 0
+```
+
+### Logging
+
+```json
+{
+  "level": "info",
+  "service": "aws-iot-connector",
+  "connector_id": "aws-iot-prod",
+  "device_id": "device-001",
+  "action": "register_thing",
+  "thing_arn": "arn:aws:iot:us-east-1:123456789012:thing/device-001",
+  "message": "Successfully registered thing with AWS IoT"
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="CA Registration Failed">
+    **Symptoms:**
+    ```
+    something went wrong while registering CA certificate: ValidationException
+    ```
+    
+    **Solutions:**
+    - Verify CA certificate is valid and not expired
+    - Check AWS region matches configuration
+    - Ensure IAM permissions include `iot:RegisterCACertificate`
+    - For primary account, verify registration code CSR is signed correctly
+  </Accordion>
+  
+  <Accordion title="Thing Registration Failed">
+    **Symptoms:**
+    ```
+    could not register thing: ResourceAlreadyExistsException
+    ```
+    
+    **Solutions:**
+    - Thing already exists with different certificate
+    - Connector will automatically revoke old certificates
+    - Check device metadata for existing AWS registration
+  </Accordion>
+  
+  <Accordion title="Shadow Update Failed">
+    **Symptoms:**
+    ```
+    could not update shadow: ResourceNotFoundException
+    ```
+    
+    **Solutions:**
+    - Verify thing is registered: `aws iot describe-thing --thing-name device-001`
+    - Check shadow name matches DMS configuration
+    - Ensure device has connected at least once to create shadow
+  </Accordion>
+</AccordionGroup>
+
+## Source Code
+
+- **Service:** `connectors/awsiot/pkg/service.go:56`
+- **Event Handlers:** `connectors/awsiot/pkg/event-handlers.go`
+- **Configuration:** `connectors/awsiot/pkg/config.go:8`
+- **Models:** `connectors/awsiot/pkg/models.go`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Device Management" icon="microchip" href="/essentials/devices">
+    Learn about device lifecycle management
+  </Card>
+  
+  <Card title="DMS Configuration" icon="gear" href="/essentials/dms">
+    Configure Device Manufacturing Services
+  </Card>
+</CardGroup>

@@ -1,0 +1,296 @@
+---
+title: 'Statistics'
+description: 'CA and certificate metrics and statistics'
+icon: 'chart-line'
+---
+
+## Get Global Statistics
+
+<api method="GET" endpoint="/api/ca/v1/stats" />
+
+Retrieve statistics for all certificate authorities and certificates in the system.
+
+### Response
+
+<ResponseField name="cas" type="object">
+  Certificate Authority statistics
+  
+  <ResponseField name="total" type="integer">
+    Total number of CAs
+  </ResponseField>
+  
+  <ResponseField name="engine_distribution" type="object">
+    CA count by crypto engine
+    
+    Key-value pairs where keys are engine IDs and values are counts
+    
+    Example:
+    ```json
+    {
+      "default-engine": 10,
+      "hsm-engine": 5
+    }
+    ```
+  </ResponseField>
+  
+  <ResponseField name="status_distribution" type="object">
+    CA count by status
+    
+    Key-value pairs where keys are status values and values are counts
+    
+    Example:
+    ```json
+    {
+      "ACTIVE": 12,
+      "REVOKED": 2,
+      "EXPIRED": 1
+    }
+    ```
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="certificates" type="object">
+  Certificate statistics
+  
+  <ResponseField name="total" type="integer">
+    Total number of certificates
+  </ResponseField>
+  
+  <ResponseField name="ca_distribution" type="object">
+    Certificate count by issuing CA
+    
+    Key-value pairs where keys are CA IDs and values are counts
+    
+    Example:
+    ```json
+    {
+      "root-ca-1": 5,
+      "intermediate-ca-1": 150,
+      "intermediate-ca-2": 230
+    }
+    ```
+  </ResponseField>
+  
+  <ResponseField name="status_distribution" type="object">
+    Certificate count by status
+    
+    Key-value pairs where keys are status values and values are counts
+    
+    Example:
+    ```json
+    {
+      "ACTIVE": 320,
+      "EXPIRED": 45,
+      "REVOKED": 15,
+      "INACTIVE": 5
+    }
+    ```
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/stats" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Example Response
+
+```json
+{
+  "cas": {
+    "total": 15,
+    "engine_distribution": {
+      "default-engine": 10,
+      "hsm-engine": 5
+    },
+    "status_distribution": {
+      "ACTIVE": 12,
+      "REVOKED": 2,
+      "EXPIRED": 1
+    }
+  },
+  "certificates": {
+    "total": 385,
+    "ca_distribution": {
+      "root-ca-1": 5,
+      "intermediate-ca-1": 150,
+      "intermediate-ca-2": 230
+    },
+    "status_distribution": {
+      "ACTIVE": 320,
+      "EXPIRED": 45,
+      "REVOKED": 15,
+      "INACTIVE": 5
+    }
+  }
+}
+```
+
+---
+
+## Get Statistics by CA
+
+<api method="GET" endpoint="/api/ca/v1/stats/{id}" />
+
+Retrieve statistics for a specific certificate authority and its issued certificates.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Response
+
+Returns the same structure as global statistics, but scoped to the specified CA:
+
+<ResponseField name="cas" type="object">
+  Statistics for the specified CA
+  
+  <ResponseField name="total" type="integer">
+    Always 1 (the specified CA)
+  </ResponseField>
+  
+  <ResponseField name="engine_distribution" type="object">
+    Engine used by this CA
+  </ResponseField>
+  
+  <ResponseField name="status_distribution" type="object">
+    Status of this CA
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="certificates" type="object">
+  Statistics for certificates issued by this CA
+  
+  <ResponseField name="total" type="integer">
+    Total certificates issued by this CA
+  </ResponseField>
+  
+  <ResponseField name="ca_distribution" type="object">
+    Will contain a single entry for this CA
+  </ResponseField>
+  
+  <ResponseField name="status_distribution" type="object">
+    Certificate count by status for this CA's certificates
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/stats/intermediate-ca-1" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Example Response
+
+```json
+{
+  "cas": {
+    "total": 1,
+    "engine_distribution": {
+      "default-engine": 1
+    },
+    "status_distribution": {
+      "ACTIVE": 1
+    }
+  },
+  "certificates": {
+    "total": 150,
+    "ca_distribution": {
+      "intermediate-ca-1": 150
+    },
+    "status_distribution": {
+      "ACTIVE": 130,
+      "EXPIRED": 15,
+      "REVOKED": 5
+    }
+  }
+}
+```
+
+---
+
+## Use Cases
+
+### Monitoring CA Health
+
+Use global statistics to monitor the overall health of your PKI infrastructure:
+
+```bash
+# Check for any revoked or expired CAs
+curl -X GET "https://your-domain.com/api/ca/v1/stats" \
+  -H "Authorization: Bearer <token>" | jq '.cas.status_distribution'
+```
+
+### Certificate Lifecycle Tracking
+
+Monitor certificate distribution across CAs to identify overloaded or underutilized CAs:
+
+```bash
+# View certificate distribution across CAs
+curl -X GET "https://your-domain.com/api/ca/v1/stats" \
+  -H "Authorization: Bearer <token>" | jq '.certificates.ca_distribution'
+```
+
+### Expiration Monitoring
+
+Combine with the expiration endpoint to track certificates nearing expiration:
+
+```bash
+# Get certificates expiring in the next 30 days
+curl -X GET "https://your-domain.com/api/ca/v1/certificates/expiration?expires_before=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)" \
+  -H "Authorization: Bearer <token>"
+```
+
+### CA-Specific Insights
+
+Analyze individual CA performance:
+
+```bash
+# Get statistics for a specific CA
+curl -X GET "https://your-domain.com/api/ca/v1/stats/intermediate-ca-1" \
+  -H "Authorization: Bearer <token>" | jq '.certificates.status_distribution'
+```
+
+---
+
+## Dashboard Integration
+
+The statistics endpoints are designed for integration with monitoring dashboards:
+
+### Metrics to Track
+
+1. **Total Active Certificates** - Monitor growth and capacity planning
+2. **Revocation Rate** - Track security incidents requiring certificate revocation
+3. **Expiration Trends** - Identify upcoming renewal peaks
+4. **CA Distribution** - Ensure load balancing across CAs
+5. **Engine Distribution** - Monitor HSM vs software-based CA usage
+
+### Sample Dashboard Query
+
+```javascript
+// Fetch stats every 5 minutes
+const fetchStats = async () => {
+  const response = await fetch('https://your-domain.com/api/ca/v1/stats', {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+  const data = await response.json();
+  
+  // Calculate metrics
+  const activeCerts = data.certificates.status_distribution.ACTIVE || 0;
+  const totalCerts = data.certificates.total;
+  const revocationRate = (data.certificates.status_distribution.REVOKED || 0) / totalCerts;
+  
+  return {
+    activeCerts,
+    totalCerts,
+    revocationRate: (revocationRate * 100).toFixed(2) + '%'
+  };
+};
+```

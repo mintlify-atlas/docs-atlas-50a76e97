@@ -1,0 +1,159 @@
+---
+title: 'Device Manager API Overview'
+description: 'Manage device lifecycle, grouping, and statistics in Lamassu IoT'
+---
+
+The Device Manager API provides comprehensive device inventory management for Lamassu IoT. It enables you to manage device lifecycles, organize devices into dynamic hierarchical groups, and retrieve detailed statistics.
+
+## Base URL
+
+```
+/api/devmanager/v1
+```
+
+## Authentication
+
+All Device Manager API endpoints require JWT authentication using the Bearer token scheme.
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  https://your-instance.com/api/devmanager/v1/devices
+```
+
+## Key Features
+
+### Device Lifecycle Management
+- Create, read, update, and delete devices
+- Manage device metadata and identity slots
+- Decommission devices when no longer in use
+- Filter and search devices by multiple criteria
+
+### Dynamic Device Groups
+- Organize devices using flexible filter criteria
+- Build hierarchical group structures with parent-child relationships
+- Automatically populate groups based on device attributes (tags, status, DMS, metadata)
+- Query devices and statistics per group
+
+### Device Statistics
+- Retrieve device counts by status
+- Filter statistics by DMS, tags, metadata, and other fields
+- Get group-specific statistics
+
+## Device Status Types
+
+Devices can have the following status values:
+
+- `NO_IDENTITY` - Device has no identity assigned
+- `ACTIVE` - Device is active and operational
+- `RENEWAL_WINDOW` - Device certificate is in renewal window
+- `ABOUT_TO_EXPIRE` - Device certificate is about to expire
+- `EXPIRED` - Device certificate has expired
+- `REVOKED` - Device certificate has been revoked
+- `DECOMMISSIONED` - Device has been decommissioned
+
+## Filtering
+
+The Device Manager API supports powerful filtering capabilities across device and device group endpoints.
+
+### Filter Syntax
+
+Filters use the format: `field[operator]:value`
+
+### Common Filter Operators
+
+**String Operators:**
+- `eq` - Equal (case-sensitive)
+- `eq_ic` - Equal ignore case
+- `ne` - Not equal (case-sensitive)
+- `ne_ic` - Not equal ignore case
+- `ct` - Contains (case-sensitive)
+- `ct_ic` - Contains ignore case
+- `nc` - Not contains (case-sensitive)
+- `nc_ic` - Not contains ignore case
+
+**Array Operators:**
+- `contains` - Contains value (case-sensitive)
+- `contains_ic` - Contains value ignore case
+
+**Date Operators:**
+- `eq` - Equal
+- `bf` - Before
+- `af` - After
+
+**Enum Operators:**
+- `eq` - Equal
+- `ne` - Not equal
+
+### Filter Examples
+
+```bash
+# Filter by DMS
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=dms_owner[eq]:dms-production"
+
+# Case-insensitive tag search
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=tags[contains_ic]:PRODUCTION"
+
+# Filter by status
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=status[eq]:ACTIVE"
+
+# Multiple filters
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=dms_owner[eq]:dms-prod&filter=tags[contains]:server"
+
+# Date range
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=creation_timestamp[af]:2024-01-01T00:00:00Z"
+```
+
+## Pagination
+
+List endpoints support pagination using bookmarks:
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination token from previous response's `next` field
+</ParamField>
+
+### Pagination Example
+
+```bash
+# First page
+curl "https://your-instance.com/api/devmanager/v1/devices?page_size=50"
+
+# Next page using bookmark
+curl "https://your-instance.com/api/devmanager/v1/devices?page_size=50&bookmark=BOOKMARK_TOKEN"
+```
+
+## Sorting
+
+List endpoints support sorting:
+
+<ParamField query="sort_by" type="string">
+  Field name to sort by
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort direction: `asc` or `desc`
+</ParamField>
+
+### Sorting Example
+
+```bash
+# Sort by creation timestamp descending
+curl "https://your-instance.com/api/devmanager/v1/devices?sort_by=creation_timestamp&sort_mode=desc"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Device Operations" icon="microchip" href="/api/device-manager/devices">
+    Create, read, update, and delete devices
+  </Card>
+  <Card title="Device Groups" icon="layer-group" href="/api/device-manager/device-groups">
+    Organize devices with dynamic groups
+  </Card>
+  <Card title="Statistics" icon="chart-bar" href="/api/device-manager/stats">
+    Retrieve device statistics and metrics
+  </Card>
+</CardGroup>

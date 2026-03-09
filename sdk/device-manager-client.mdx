@@ -1,0 +1,516 @@
+---
+title: Device Manager Client
+description: Device lifecycle management using the Go SDK
+---
+
+The Device Manager Client provides comprehensive device lifecycle management, including device registration, status updates, metadata management, and device grouping.
+
+## Initialization
+
+Create a Device Manager client instance:
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+)
+
+deviceClient := sdk.NewHttpDeviceManagerClient(httpClient, "https://device.lamassu.example.com")
+```
+
+## Device Operations
+
+### Create a Device
+
+Register a new device:
+
+```go
+import (
+    "context"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+)
+
+device, err := deviceClient.CreateDevice(context.Background(), services.CreateDeviceInput{
+    ID:    "device-001",
+    Alias: "Temperature Sensor 1",
+    Tags: []string{"sensor", "temperature", "warehouse-a"},
+    Metadata: map[string]interface{}{
+        "location": "Warehouse A - Zone 3",
+        "model":    "TS-2000",
+    },
+    DMSID:     "manufacturing-dms",
+    Icon:      "thermometer",
+    IconColor: "#FF5722",
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Created device: %s", device.ID)
+```
+
+### Get Device by ID
+
+Retrieve a specific device:
+
+```go
+device, err := deviceClient.GetDeviceByID(context.Background(), services.GetDeviceByIDInput{
+    ID: "device-001",
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Device: %s, Status: %s", device.Alias, device.Status)
+```
+
+### List All Devices
+
+Retrieve all devices with pagination and filtering:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/resources"
+
+var devices []*models.Device
+
+_, err := deviceClient.GetDevices(context.Background(), services.GetDevicesInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        PageSize: 100,
+        Sort: resources.SortOptions{
+            SortField: "created_at",
+            SortMode:  resources.SortModeDesc,
+        },
+        Filters: []resources.FilterOption{
+            {
+                Field:           "status",
+                FilterOperation: resources.StringEqual,
+                Value:           string(models.DeviceActive),
+            },
+        },
+    },
+    ApplyFunc: func(device models.Device) {
+        devices = append(devices, &device)
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Found %d devices", len(devices))
+```
+
+### Get Devices by DMS
+
+Retrieve all devices associated with a specific DMS:
+
+```go
+var dmsDevices []*models.Device
+
+_, err := deviceClient.GetDeviceByDMS(context.Background(), services.GetDevicesByDMSInput{
+    DMSID:         "manufacturing-dms",
+    ExhaustiveRun: true,
+    ApplyFunc: func(device models.Device) {
+        dmsDevices = append(dmsDevices, &device)
+    },
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Update Device Status
+
+Decommission a device:
+
+```go
+device, err := deviceClient.UpdateDeviceStatus(context.Background(),
+    services.UpdateDeviceStatusInput{
+        ID: "device-001",
+    },
+)
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Device status: %s", device.Status)
+```
+
+### Update Device Identity Slot
+
+Update the identity slot for a device:
+
+```go
+device, err := deviceClient.UpdateDeviceIdentitySlot(context.Background(),
+    services.UpdateDeviceIdentitySlotInput{
+        ID:   "device-001",
+        Slot: 1,
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Update Device Metadata
+
+Update device metadata using JSON patches:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+
+device, err := deviceClient.UpdateDeviceMetadata(context.Background(),
+    services.UpdateDeviceMetadataInput{
+        ID: "device-001",
+        Patches: []models.MetadataPatch{
+            {
+                Op:    "add",
+                Path:  "firmware_version",
+                Value: "2.1.0",
+            },
+            {
+                Op:    "replace",
+                Path:  "location",
+                Value: "Warehouse B - Zone 1",
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Delete Device
+
+Delete a device:
+
+```go
+err := deviceClient.DeleteDevice(context.Background(), services.DeleteDeviceInput{
+    ID: "device-001",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+## Device Group Operations
+
+### Create Device Group
+
+Create a device group with criteria:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/resources"
+
+group, err := deviceClient.CreateDeviceGroup(context.Background(),
+    services.CreateDeviceGroupInput{
+        ID:          "temperature-sensors",
+        Name:        "Temperature Sensors",
+        Description: "All temperature sensor devices",
+        ParentID:    nil, // Root group
+        Criteria: []models.DeviceGroupFilterOption{
+            {
+                Field:           "tags",
+                FilterOperation: int(resources.StringArrayContains),
+                Value:           "temperature",
+            },
+            {
+                Field:           "status",
+                FilterOperation: int(resources.StringEqual),
+                Value:           string(models.DeviceActive),
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Created group: %s", group.Name)
+```
+
+### Create Nested Device Group
+
+Create a child group:
+
+```go
+parentID := "temperature-sensors"
+
+childGroup, err := deviceClient.CreateDeviceGroup(context.Background(),
+    services.CreateDeviceGroupInput{
+        ID:          "warehouse-a-sensors",
+        Name:        "Warehouse A Sensors",
+        Description: "Temperature sensors in Warehouse A",
+        ParentID:    &parentID,
+        Criteria: []models.DeviceGroupFilterOption{
+            {
+                Field:           "metadata.location",
+                FilterOperation: int(resources.StringContains),
+                Value:           "Warehouse A",
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Get Device Group by ID
+
+Retrieve a device group:
+
+```go
+group, err := deviceClient.GetDeviceGroupByID(context.Background(),
+    services.GetDeviceGroupByIDInput{
+        ID: "temperature-sensors",
+    },
+)
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Group: %s, Criteria count: %d", group.Name, group.OwnCriteriaCount)
+```
+
+### List Device Groups
+
+Retrieve all device groups:
+
+```go
+var groups []*models.DeviceGroup
+
+_, err := deviceClient.GetDeviceGroups(context.Background(),
+    services.GetDeviceGroupsInput{
+        ExhaustiveRun: true,
+        ApplyFunc: func(group models.DeviceGroup) {
+            groups = append(groups, &group)
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Get Devices in Group
+
+Retrieve all devices belonging to a group:
+
+```go
+var groupDevices []*models.Device
+
+_, err := deviceClient.GetDevicesByGroup(context.Background(),
+    services.GetDevicesByGroupInput{
+        GroupID:       "temperature-sensors",
+        ExhaustiveRun: true,
+        ApplyFunc: func(device models.Device) {
+            groupDevices = append(groupDevices, &device)
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Group has %d devices", len(groupDevices))
+```
+
+### Update Device Group
+
+Update an existing device group:
+
+```go
+group, err := deviceClient.UpdateDeviceGroup(context.Background(),
+    services.UpdateDeviceGroupInput{
+        ID:          "temperature-sensors",
+        Name:        "All Temperature Sensors",
+        Description: "Updated description",
+        Criteria: []models.DeviceGroupFilterOption{
+            {
+                Field:           "tags",
+                FilterOperation: int(resources.StringArrayContains),
+                Value:           "temperature",
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Delete Device Group
+
+Delete a device group:
+
+```go
+err := deviceClient.DeleteDeviceGroup(context.Background(),
+    services.DeleteDeviceGroupInput{
+        ID: "old-group",
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Get Device Group Statistics
+
+Retrieve statistics for a device group:
+
+```go
+stats, err := deviceClient.GetDeviceGroupStats(context.Background(),
+    services.GetDeviceGroupStatsInput{
+        GroupID: "temperature-sensors",
+    },
+)
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Total devices: %d", stats.TotalDevices)
+log.Printf("Active devices: %d", stats.ActiveDevices)
+```
+
+## Device Statistics
+
+### Get Devices Statistics
+
+Retrieve overall device statistics:
+
+```go
+stats, err := deviceClient.GetDevicesStats(context.Background(),
+    services.GetDevicesStatsInput{
+        QueryParameters: &resources.QueryParameters{
+            Filters: []resources.FilterOption{
+                {
+                    Field:           "status",
+                    FilterOperation: resources.StringEqual,
+                    Value:           string(models.DeviceActive),
+                },
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Total devices: %d", stats.TotalDevices)
+log.Printf("Active: %d, Decommissioned: %d", stats.ActiveDevices, stats.DecommissionedDevices)
+```
+
+## Advanced Filtering
+
+### Filter by Tags
+
+Find devices with specific tags:
+
+```go
+var taggedDevices []*models.Device
+
+_, err := deviceClient.GetDevices(context.Background(), services.GetDevicesInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "tags",
+                FilterOperation: resources.StringArrayContains,
+                Value:           "sensor",
+            },
+        },
+    },
+    ApplyFunc: func(device models.Device) {
+        taggedDevices = append(taggedDevices, &device)
+    },
+})
+```
+
+### Filter by Metadata
+
+Find devices using metadata JSON path expressions:
+
+```go
+var warehouseDevices []*models.Device
+
+_, err := deviceClient.GetDevices(context.Background(), services.GetDevicesInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "metadata",
+                FilterOperation: resources.JsonPathExpression,
+                Value:           "$.location[?(@=~'.*Warehouse A.*')]",
+            },
+        },
+    },
+    ApplyFunc: func(device models.Device) {
+        warehouseDevices = append(warehouseDevices, &device)
+    },
+})
+```
+
+### Filter by Creation Date
+
+Find recently created devices:
+
+```go
+import "time"
+
+var recentDevices []*models.Device
+lastWeek := time.Now().AddDate(0, 0, -7).Format("2006-01-02T15:04:05Z")
+
+_, err := deviceClient.GetDevices(context.Background(), services.GetDevicesInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "created_at",
+                FilterOperation: resources.DateAfter,
+                Value:           lastWeek,
+            },
+        },
+    },
+    ApplyFunc: func(device models.Device) {
+        recentDevices = append(recentDevices, &device)
+    },
+})
+```
+
+## Error Handling
+
+The Device Manager client maps HTTP errors to specific error types:
+
+```go
+import (
+    "errors"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/errs"
+)
+
+device, err := deviceClient.GetDeviceByID(context.Background(), services.GetDeviceByIDInput{
+    ID: "unknown-device",
+})
+if err != nil {
+    if errors.Is(err, errs.ErrDeviceNotFound) {
+        log.Println("Device not found")
+    } else if errors.Is(err, errs.ErrDeviceInvalidStatus) {
+        log.Println("Invalid device status transition")
+    } else if errors.Is(err, errs.ErrDeviceGroupNotFound) {
+        log.Println("Device group not found")
+    } else if errors.Is(err, errs.ErrDeviceGroupCircularReference) {
+        log.Println("Circular reference in device group hierarchy")
+    } else {
+        log.Printf("Unexpected error: %v", err)
+    }
+}
+```
+
+Common errors:
+- `errs.ErrDeviceNotFound` - Device not found (404)
+- `errs.ErrDeviceInvalidStatus` - Invalid status transition (422)
+- `errs.ErrDeviceGroupNotFound` - Device group not found (404)
+- `errs.ErrDeviceGroupCircularReference` - Circular group reference (400)
+- `errs.ErrValidateBadRequest` - Validation error (400)

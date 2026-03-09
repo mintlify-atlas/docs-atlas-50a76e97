@@ -1,0 +1,121 @@
+---
+title: Deployment Overview
+description: Choose the right deployment strategy for your Lamassu IoT environment
+icon: rocket
+---
+
+Lamassu IoT offers flexible deployment options designed for different use cases, from local development to production-grade Kubernetes clusters.
+
+## Deployment Options
+
+<CardGroup cols={2}>
+  <Card title="Monolithic Deployment" icon="cube" href="/deployment/monolithic">
+    All-in-one deployment for development, demos, and small-scale environments
+  </Card>
+  <Card title="Kubernetes Deployment" icon="dharmachakra" href="/deployment/kubernetes">
+    Production-ready microservices deployment with horizontal scaling
+  </Card>
+</CardGroup>
+
+## Architecture Comparison
+
+### Monolithic Deployment
+
+The monolithic deployment bundles all Lamassu services into a single process or container. It automatically manages dependencies like PostgreSQL, RabbitMQ, and Vault using Docker containers.
+
+**Best for:**
+- Local development and testing
+- Proof-of-concept deployments
+- Demo environments
+- Quick evaluation of Lamassu features
+
+**Characteristics:**
+- Single binary or container
+- Automatic dependency management
+- Minimal configuration required
+- In-memory or SQLite storage options
+- HTTP or in-memory service communication
+
+### Kubernetes Deployment
+
+The Kubernetes deployment runs each Lamassu service as an independent microservice with dedicated pods, allowing for fine-grained scaling and resource management.
+
+**Best for:**
+- Production environments
+- High-availability requirements
+- Large-scale IoT deployments
+- Enterprise integration scenarios
+
+**Characteristics:**
+- Independent service scaling
+- High availability with pod replication
+- Advanced networking and ingress
+- Production-grade storage backends
+- Comprehensive observability
+
+## Core Services
+
+Both deployment options include these essential services:
+
+| Service | Description | Container Image |
+|---------|-------------|----------------|
+| **CA Service** | Certificate Authority management and certificate lifecycle operations | `ghcr.io/lamassuiot/lamassu-ca` |
+| **Device Manager** | IoT device registration, management, and provisioning | `ghcr.io/lamassuiot/lamassu-device-manager` |
+| **DMS Manager** | Device Manufacturing System for secure device onboarding | `ghcr.io/lamassuiot/lamassu-dms-manager` |
+| **KMS** | Key Management Service for cryptographic operations | `ghcr.io/lamassuiot/lamassu-kms` |
+| **Alerts** | Event monitoring and alerting system | `ghcr.io/lamassuiot/lamassu-alerts` |
+| **VA** | Validation Authority for certificate validation | `ghcr.io/lamassuiot/lamassu-va` |
+| **UI** | Web-based management dashboard | `ghcr.io/lamassuiot/lamassu-ui` |
+
+## Infrastructure Dependencies
+
+### Required Components
+
+<AccordionGroup>
+  <Accordion title="PostgreSQL" icon="database">
+    Primary data store for certificate metadata, device records, and system configuration.
+    
+    - **Development:** Automatically managed by monolithic launcher
+    - **Production:** External PostgreSQL 12+ cluster recommended
+  </Accordion>
+  
+  <Accordion title="Message Broker" icon="message">
+    Asynchronous event bus for inter-service communication.
+    
+    - **Options:** RabbitMQ (default), AWS SQS/SNS, or in-memory (dev only)
+    - **Development:** Automatically managed or in-memory mode
+    - **Production:** Dedicated RabbitMQ cluster or managed AWS services
+  </Accordion>
+  
+  <Accordion title="Crypto Engine" icon="key">
+    Secure key storage and cryptographic operations backend.
+    
+    - **Options:** HashiCorp Vault, AWS KMS, AWS Secrets Manager, PKCS#11 HSM, Filesystem
+    - **Development:** Filesystem or auto-configured Vault
+    - **Production:** Hardware-backed HSM or cloud KMS strongly recommended
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<Steps>
+  <Step title="Choose Your Deployment">
+    Select the deployment strategy that matches your requirements:
+    - [Monolithic](/deployment/monolithic) for development and testing
+    - [Kubernetes](/deployment/kubernetes) for production workloads
+  </Step>
+  
+  <Step title="Review Configuration">
+    Understand the [configuration options](/deployment/configuration) including environment variables, storage backends, and crypto engines.
+  </Step>
+  
+  <Step title="Deploy and Verify">
+    Follow the deployment guide and verify service health through the web UI or API endpoints.
+  </Step>
+</Steps>
+
+## Additional Resources
+
+- [Helm Charts Repository](https://github.com/lamassuiot/lamassu-helm) - Kubernetes deployment manifests
+- [UI Repository](https://github.com/lamassuiot/lamassu-ui) - Web dashboard source code
+- [Source Code](https://github.com/lamassuiot/lamassuiot) - Backend services and APIs

@@ -1,0 +1,486 @@
+---
+title: 'Validation Endpoints'
+description: 'OCSP, CRL, and VA role management endpoints'
+---
+
+## OCSP: Verify Certificate (GET)
+
+<api method="GET" endpoint="/ocsp/{ocsp_request}" />
+
+Verify certificate status using OCSP via HTTP GET method. The OCSP request should be base64 encoded and URL-safe.
+
+<Note>
+  This endpoint is **publicly accessible** and does not require authentication.
+</Note>
+
+<ParamField path="ocsp_request" type="string" required>
+  Base64 URL-safe encoded OCSP request
+</ParamField>
+
+### Response
+
+Returns a binary OCSP response.
+
+**Content-Type:** `application/ocsp-response`
+
+The response indicates one of three statuses:
+- **good** - Certificate is valid and not revoked
+- **revoked** - Certificate has been revoked
+- **unknown** - Certificate status is unknown
+
+### Example Request
+
+```bash
+# Create OCSP request using OpenSSL
+openssl ocsp -issuer ca-cert.pem -cert device-cert.pem -reqout ocsp-req.der
+
+# Encode to base64 URL-safe format
+OCSP_REQ=$(cat ocsp-req.der | base64 | tr '+/' '-_' | tr -d '=')
+
+# Query OCSP endpoint
+curl -X GET "https://api.lamassu.io/api/va/v1/ocsp/$OCSP_REQ" \
+  --output ocsp-response.der
+
+# Parse OCSP response
+openssl ocsp -respin ocsp-response.der -text -noverify
+```
+
+### Example with Automatic OCSP Validation
+
+```bash
+# Verify certificate with OCSP (OpenSSL does GET request automatically)
+openssl ocsp \
+  -issuer ca-cert.pem \
+  -cert device-cert.pem \
+  -url https://api.lamassu.io/api/va/v1/ocsp \
+  -CAfile ca-cert.pem
+```
+
+---
+
+## OCSP: Verify Certificate (POST)
+
+<api method="POST" endpoint="/ocsp" />
+
+Verify certificate status using OCSP via HTTP POST method. The OCSP request should be sent as binary data in the request body.
+
+<Note>
+  This endpoint is **publicly accessible** and does not require authentication.
+</Note>
+
+### Request Body
+
+**Content-Type:** `application/ocsp-request`
+
+Binary OCSP request data.
+
+### Response
+
+Returns a binary OCSP response.
+
+**Content-Type:** `application/ocsp-response`
+
+### Example Request
+
+```bash
+# Create OCSP request
+openssl ocsp -issuer ca-cert.pem -cert device-cert.pem -reqout ocsp-req.der
+
+# Send POST request
+curl -X POST "https://api.lamassu.io/api/va/v1/ocsp" \
+  -H "Content-Type: application/ocsp-request" \
+  --data-binary @ocsp-req.der \
+  --output ocsp-response.der
+
+# Parse response
+openssl ocsp -respin ocsp-response.der -text -noverify
+```
+
+---
+
+## Get Certificate Revocation List
+
+<api method="GET" endpoint="/crl/{ca-ski}" />
+
+Retrieve the Certificate Revocation List for a specific Certificate Authority identified by its Subject Key Identifier (SKI).
+
+<Note>
+  This endpoint is **publicly accessible** and does not require authentication.
+</Note>
+
+<ParamField path="ca-ski" type="string" required>
+  Certificate Authority Subject Key Identifier (hex encoded)
+</ParamField>
+
+### Response
+
+Returns DER-encoded CRL data.
+
+**Content-Type:** `application/pkix-crl`
+
+### Example Request
+
+```bash
+# Download CRL
+curl -X GET "https://api.lamassu.io/api/va/v1/crl/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0" \
+  --output ca-crl.der
+
+# Convert to PEM format
+openssl crl -inform DER -in ca-crl.der -outform PEM -out ca-crl.pem
+
+# View CRL contents
+openssl crl -in ca-crl.pem -text -noout
+```
+
+### Example: Verify Certificate Against CRL
+
+```bash
+# Download CRL
+curl -X GET "https://api.lamassu.io/api/va/v1/crl/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0" \
+  --output ca-crl.der
+
+# Convert to PEM
+openssl crl -inform DER -in ca-crl.der -outform PEM -out ca-crl.pem
+
+# Verify certificate against CRL
+openssl verify -crl_check -CRLfile ca-crl.pem -CAfile ca-cert.pem device-cert.pem
+```
+
+---
+
+## Get VA Role
+
+<api method="GET" endpoint="/v1/roles/{ca-ski}" />
+
+Retrieve the Validation Authority role configuration for a specific Certificate Authority.
+
+<ParamField path="ca-ski" type="string" required>
+  Certificate Authority Subject Key Identifier (hex encoded)
+</ParamField>
+
+### Response
+
+<ResponseField name="ca_ski" type="string">
+  Certificate Authority Subject Key Identifier
+</ResponseField>
+
+<ResponseField name="crl_options" type="object">
+  CRL generation and management configuration
+  <Expandable title="CRL Options">
+    <ResponseField name="refresh_interval" type="string">
+      Interval between automatic CRL regenerations (duration format: "1h", "24h", "7d")
+    </ResponseField>
+    <ResponseField name="validity" type="string">
+      Duration for which a generated CRL is valid (duration format)
+    </ResponseField>
+    <ResponseField name="subject_key_id_signer" type="string">
+      Subject Key Identifier of the key used to sign the CRL (hex encoded)
+    </ResponseField>
+    <ResponseField name="regenerate_on_revoke" type="boolean">
+      Whether to automatically regenerate CRL when a certificate is revoked
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="latest_crl" type="object">
+  Metadata about the most recently generated CRL
+  <Expandable title="Latest CRL">
+    <ResponseField name="version" type="string">
+      CRL version number
+    </ResponseField>
+    <ResponseField name="valid_from" type="string" format="date-time">
+      Timestamp when the CRL becomes valid
+    </ResponseField>
+    <ResponseField name="valid_until" type="string" format="date-time">
+      Timestamp when the CRL expires
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/va/v1/v1/roles/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "ca_ski": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+  "crl_options": {
+    "refresh_interval": "24h",
+    "validity": "168h",
+    "subject_key_id_signer": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "regenerate_on_revoke": true
+  },
+  "latest_crl": {
+    "version": "1",
+    "valid_from": "2025-11-07T10:00:00Z",
+    "valid_until": "2025-11-14T10:00:00Z"
+  }
+}
+```
+
+---
+
+## Update VA Role
+
+<api method="PUT" endpoint="/v1/roles/{ca-ski}" />
+
+Update the Validation Authority role configuration for a Certificate Authority. This includes CRL generation settings and signing configuration.
+
+<ParamField path="ca-ski" type="string" required>
+  Certificate Authority Subject Key Identifier (hex encoded)
+</ParamField>
+
+### Request Body
+
+<ParamField body="refresh_interval" type="string" required>
+  Interval between automatic CRL regenerations (duration format: "1h", "24h", "7d")
+</ParamField>
+
+<ParamField body="validity" type="string" required>
+  Duration for which a generated CRL is valid (duration format: "1h", "24h", "7d")
+</ParamField>
+
+<ParamField body="subject_key_id_signer" type="string" required>
+  Subject Key Identifier of the key used to sign the CRL (hex encoded). This should reference a key from the CA.
+</ParamField>
+
+<ParamField body="regenerate_on_revoke" type="boolean" required>
+  Whether to automatically regenerate the CRL when a certificate is revoked.
+  - `true`: New CRL generated immediately upon certificate revocation
+  - `false`: CRL only regenerated based on refresh_interval
+</ParamField>
+
+### Response
+
+Returns the updated VA role configuration.
+
+### Example Request
+
+```bash
+curl -X PUT "https://api.lamassu.io/api/va/v1/v1/roles/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_interval": "12h",
+    "validity": "168h",
+    "subject_key_id_signer": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "regenerate_on_revoke": true
+  }'
+```
+
+---
+
+## CRL Configuration Best Practices
+
+<AccordionGroup>
+  <Accordion title="Refresh Interval">
+    **Recommended values:**
+    - **Critical infrastructure**: 1-6 hours
+    - **Production systems**: 12-24 hours
+    - **Development/Testing**: 24-168 hours (1-7 days)
+
+    Consider the trade-off between freshness and server load. More frequent refreshes provide more current data but increase computational overhead.
+  </Accordion>
+
+  <Accordion title="Validity Period">
+    Set validity period longer than refresh interval to allow for processing delays and ensure CRL doesn't expire before next refresh.
+
+    **Recommended formula:** validity = refresh_interval × 1.5 to 2.0
+
+    Example:
+    - refresh_interval: "24h"
+    - validity: "48h" or "72h"
+  </Accordion>
+
+  <Accordion title="Regenerate on Revoke">
+    **Enable (`true`) when:**
+    - Immediate revocation visibility is critical
+    - Security incidents require fast response
+    - Compliance mandates real-time revocation
+
+    **Disable (`false`) when:**
+    - Periodic CRL updates are sufficient
+    - Minimizing computational load is important
+    - OCSP is the primary validation method
+  </Accordion>
+
+  <Accordion title="Signing Key Selection">
+    Use the CA's signing key (same key that signs certificates) for maximum compatibility. Some validators may not accept CRLs signed by a different key.
+
+    Ensure the signing key:
+    - Has the CRL signing capability
+    - Is the same key used by the CA for certificate signing
+    - Is available in the KMS
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Integration Examples
+
+### Python: OCSP Verification
+
+```python
+import requests
+from cryptography import x509
+from cryptography.x509 import ocsp
+from cryptography.hazmat.primitives import hashes, serialization
+
+def verify_certificate_ocsp(cert, issuer, ocsp_url):
+    # Build OCSP request
+    builder = ocsp.OCSPRequestBuilder()
+    builder = builder.add_certificate(cert, issuer, hashes.SHA256())
+    req = builder.build()
+    
+    # Send OCSP request
+    response = requests.post(
+        ocsp_url,
+        headers={'Content-Type': 'application/ocsp-request'},
+        data=req.public_bytes(serialization.Encoding.DER)
+    )
+    
+    # Parse OCSP response
+    ocsp_resp = ocsp.load_der_ocsp_response(response.content)
+    
+    if ocsp_resp.certificate_status == ocsp.OCSPCertStatus.GOOD:
+        print("Certificate is valid")
+        return True
+    elif ocsp_resp.certificate_status == ocsp.OCSPCertStatus.REVOKED:
+        print("Certificate is revoked")
+        return False
+    else:
+        print("Certificate status unknown")
+        return False
+```
+
+### Go: Download and Parse CRL
+
+```go
+package main
+
+import (
+    "crypto/x509"
+    "fmt"
+    "io/ioutil"
+    "net/http"
+)
+
+func downloadCRL(caSKI string) (*x509.RevocationList, error) {
+    url := fmt.Sprintf("https://api.lamassu.io/api/va/v1/crl/%s", caSKI)
+    
+    resp, err := http.Get(url)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+    
+    crlBytes, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        return nil, err
+    }
+    
+    crl, err := x509.ParseRevocationList(crlBytes)
+    if err != nil {
+        return nil, err
+    }
+    
+    return crl, nil
+}
+
+func isCertificateRevoked(cert *x509.Certificate, crl *x509.RevocationList) bool {
+    for _, revoked := range crl.RevokedCertificates {
+        if cert.SerialNumber.Cmp(revoked.SerialNumber) == 0 {
+            return true
+        }
+    }
+    return false
+}
+```
+
+### Node.js: OCSP Check
+
+```javascript
+const https = require('https');
+const { Certificate } = require('@fidm/x509');
+
+async function verifyOCSP(certPem, issuerPem, ocspUrl) {
+  const cert = Certificate.fromPEM(certPem);
+  const issuer = Certificate.fromPEM(issuerPem);
+  
+  // Build OCSP request (simplified - use a proper OCSP library)
+  const ocspRequest = buildOCSPRequest(cert, issuer);
+  
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      ocspUrl,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/ocsp-request',
+          'Content-Length': ocspRequest.length
+        }
+      },
+      (res) => {
+        let data = [];
+        res.on('data', chunk => data.push(chunk));
+        res.on('end', () => {
+          const response = Buffer.concat(data);
+          const status = parseOCSPResponse(response);
+          resolve(status === 'good');
+        });
+      }
+    );
+    
+    req.on('error', reject);
+    req.write(ocspRequest);
+    req.end();
+  });
+}
+```
+
+---
+
+## Troubleshooting
+
+### OCSP Request Failed
+
+**Problem**: OCSP endpoint returns 400 Bad Request
+
+**Solutions**:
+- Verify OCSP request is properly formatted
+- Ensure certificate and issuer certificate are correct
+- Check that the CA SKI in the request matches the VA configuration
+- For GET requests, ensure proper URL encoding of base64 data
+
+### CRL Not Found
+
+**Problem**: CRL endpoint returns 404 Not Found
+
+**Solutions**:
+- Verify the CA SKI is correct (hex encoded)
+- Ensure VA role is configured for the CA
+- Check that at least one CRL has been generated
+
+### CRL Expired
+
+**Problem**: Downloaded CRL shows as expired
+
+**Solutions**:
+- Check VA role configuration: ensure refresh_interval is appropriate
+- Verify regenerate_on_revoke setting
+- Manually trigger CRL regeneration if needed
+- Check system time on client and server
+
+### OCSP Response Shows Unknown
+
+**Problem**: OCSP returns "unknown" status
+
+**Solutions**:
+- Verify the certificate was issued by the specified CA
+- Check that the certificate exists in the system
+- Ensure OCSP responder is configured for the CA

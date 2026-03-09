@@ -1,0 +1,415 @@
+---
+title: 'Crypto Engines'
+description: 'Key generation and signing with Software, AWS KMS, PKCS#11, and Vault'
+---
+
+## Overview
+
+Crypto engines manage private key lifecycle operations:
+
+- **Key Generation** - RSA and ECDSA key pair creation
+- **Key Storage** - Secure storage with HSM or cloud KMS
+- **Signing Operations** - Digital signatures via `crypto.Signer` interface
+- **Key Import/Export** - Migrate keys between engines
+
+All engines implement the `CryptoEngine` interface from `github.com/lamassuiot/lamassuiot/core/v3/pkg/engines/cryptoengines`.
+
+## Available Engines
+
+<Tabs>
+  <Tab title="Software">
+    ## Software Crypto Engine
+    
+    Pure Go implementation using standard library crypto. Keys stored in memory or filesystem.
+    
+    **Import Path:**
+    ```go
+    import "github.com/lamassuiot/lamassuiot/engines/crypto/software/v3"
+    ```
+    
+    **Key Features:**
+    - Security Level: **SL1**
+    - RSA: 2048, 3072, 4096 bits
+    - ECDSA: P-256, P-384, P-521 curves
+    - PKCS#8 private key encoding
+    - No external dependencies
+    
+    **Usage:**
+    ```go
+    engine := software.NewSoftwareCryptoEngine(logger)
+    
+    // Generate RSA key
+    keyID, signer, err := engine.CreateRSAPrivateKey(ctx, 2048)
+    
+    // Generate ECDSA key
+    keyID, signer, err := engine.CreateECDSAPrivateKey(ctx, elliptic.P256())
+    ```
+    
+    **Configuration:**
+    No configuration required. Used as fallback for key encoding operations in other engines.
+    
+    **Source:** `engines/crypto/software/software.go:41`
+  </Tab>
+  
+  <Tab title="AWS KMS">
+    ## AWS KMS Crypto Engine
+    
+    Hardware-backed key storage using AWS Key Management Service.
+    
+    **Import Path:**
+    ```go
+    import "github.com/lamassuiot/lamassuiot/engines/crypto/aws/v3"
+    ```
+    
+    **Key Features:**
+    - Security Level: **SL2**
+    - RSA: 2048, 3072, 4096 bits
+    - ECDSA: P-256, P-384, P-521 (NIST curves)
+    - Key aliases for human-readable naming
+    - Support for external key import
+    - FIPS 140-2 Level 2 validated HSMs
+    
+    **Configuration:**
+    ```yaml
+    crypto:
+      - id: aws-kms-primary
+        type: awskms
+        config:
+          aws_region: us-east-1
+          aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+          aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+        metadata:
+          location: us-east-1
+    ```
+    
+    **Config Struct:**
+    ```go
+    type AWSCryptoEngine struct {
+        AWSSDKConfig  // Region, credentials, endpoint
+        ID       string
+        Metadata map[string]interface{}
+    }
+    ```
+    
+    **Key Management:**
+    ```go
+    // Keys identified by SHA-256 hash of public key
+    keyID, signer, err := engine.CreateRSAPrivateKey(ctx, 4096)
+    
+    // Create alias for key
+    alias := fmt.Sprintf("alias/%s", keyID)
+    
+    // Import existing key
+    keyID, signer, err := engine.ImportRSAPrivateKey(privateKey)
+    ```
+    
+    **Signing Algorithm Selection:**
+    - RSA: RSASSA-PKCS1-v1_5 or RSASSA-PSS
+    - ECDSA: Deterministic signatures with SHA-256/384/512
+    
+    **Source:** `engines/crypto/aws/awskms.go:35`
+  </Tab>
+  
+  <Tab title="PKCS#11">
+    ## PKCS#11 HSM Engine
+    
+    Interface to hardware security modules via PKCS#11 standard.
+    
+    **Import Path:**
+    ```go
+    import "github.com/lamassuiot/lamassuiot/engines/crypto/pkcs11/v3"
+    ```
+    
+    **Key Features:**
+    - Security Level: **SL2**
+    - RSA: Determined by HSM capabilities
+    - ECDSA: Determined by HSM capabilities
+    - Support for SoftHSM, Thales, Gemalto, Utimaco
+    - Token-based key isolation
+    - FIPS 140-2 Level 3+ with certified HSMs
+    
+    **Configuration:**
+    ```yaml
+    crypto:
+      - id: hsm-primary
+        type: pkcs11
+        config:
+          module_path: /usr/lib/softhsm/libsofthsm2.so
+          token: lamassu-ca
+          pin: ${HSM_PIN}
+          module_extra_options:
+            env:
+              SOFTHSM2_CONF: /etc/softhsm2.conf
+        metadata:
+          vendor: SoftHSM
+          model: SoftHSM v2
+    ```
+    
+    **Config Struct:**
+    ```go
+    type PKCS11Config struct {
+        TokenLabel         string
+        TokenPin           config.Password
+        ModulePath         string
+        ModuleExtraOptions PKCS11ModuleExtraOptions
+    }
+    
+    type PKCS11ModuleExtraOptions struct {
+        Env map[string]string  // Environment variables
+    }
+    ```
+    
+    **Setup Example (SoftHSM):**
+    ```bash
+    # Initialize token
+    softhsm2-util --init-token --slot 0 \
+      --label "lamassu-ca" \
+      --so-pin 1234 --pin 5678
+    
+    # Verify token
+    softhsm2-util --show-slots
+    ```
+    
+    **Key Attributes:**
+    - Keys labeled with public key digest (SHA-256)
+    - CKA_LABEL: Human-readable identifier
+    - CKA_ID: Binary identifier
+    - CKA_SIGN: Enabled for signing operations
+    
+    **Source:** `engines/crypto/pkcs11/pkcs11.go:30`
+  </Tab>
+  
+  <Tab title="Vault KV2">
+    ## HashiCorp Vault KV2 Engine
+    
+    Store private keys in Vault's Key-Value v2 secrets engine.
+    
+    **Import Path:**
+    ```go
+    import "github.com/lamassuiot/lamassuiot/engines/crypto/vaultkv2/v3"
+    ```
+    
+    **Key Features:**
+    - Security Level: **SL1**
+    - RSA: 2048, 3072, 4096 bits
+    - ECDSA: P-224, P-256, P-384, P-521
+    - Versioned secret storage
+    - Automatic key generation and import
+    - AppRole authentication
+    
+    **Configuration:**
+    ```yaml
+    crypto:
+      - id: vault-dev
+        type: vaultkv2
+        config:
+          protocol: https
+          hostname: vault.example.com
+          port: 8200
+          role_id: ${VAULT_ROLE_ID}
+          secret_id: ${VAULT_SECRET_ID}
+          mount_path: lamassu-keys
+          auto_unseal_enabled: false
+          tls_config:
+            insecure_skip_verify: false
+            ca_certificate_path: /etc/ssl/certs/vault-ca.pem
+    ```
+    
+    **Config Struct:**
+    ```go
+    type HashicorpVaultSDK struct {
+        RoleID            string
+        SecretID          config.Password
+        AutoUnsealEnabled bool
+        AutoUnsealKeys    []config.Password
+        MountPath         string
+        HTTPConnection    // Protocol, Hostname, Port, TLS
+    }
+    ```
+    
+    **Key Storage Format:**
+    Keys stored as base64-encoded PEM at path `{mount_path}/data/{keyID}`:
+    ```json
+    {
+      "data": {
+        "key": "LS0tLS1CRUdJTi..." // Base64(PEM)
+      },
+      "metadata": {
+        "version": 1,
+        "created_time": "2024-01-15T10:00:00Z"
+      }
+    }
+    ```
+    
+    **Operations:**
+    ```go
+    // Retrieve key by ID
+    signer, err := engine.GetPrivateKeyByID(keyID)
+    
+    // List all keys
+    keyIDs, err := engine.ListPrivateKeyIDs()
+    
+    // Rename key
+    err := engine.RenameKey(oldID, newID)
+    ```
+    
+    **Source:** `engines/crypto/vaultkv2/vaultkv2.go:27`
+  </Tab>
+</Tabs>
+
+## Engine Selection Guide
+
+| Use Case | Recommended Engine | Security Level |
+|----------|-------------------|----------------|
+| Development/Testing | Software | SL1 |
+| Cloud Production (AWS) | AWS KMS | SL2 |
+| On-Premises Production | PKCS#11 (HSM) | SL2 |
+| Hybrid Cloud | Vault KV2 | SL1 |
+| Air-Gapped Environments | PKCS#11 (HSM) | SL2 |
+
+## Multi-Engine Configuration
+
+You can register multiple crypto engines and select them per CA:
+
+```yaml
+crypto:
+  - id: dev-software
+    type: software
+  
+  - id: prod-hsm
+    type: pkcs11
+    config:
+      module_path: /usr/lib/libCryptoki2_64.so
+      token: prod-ca-token
+      pin: ${PROD_HSM_PIN}
+  
+  - id: cloud-kms
+    type: awskms
+    config:
+      aws_region: eu-west-1
+```
+
+When creating a CA, specify the engine ID:
+
+```bash
+lamassuctl ca create \
+  --id root-ca \
+  --crypto-engine-id prod-hsm \
+  --key-type RSA \
+  --key-size 4096
+```
+
+## Common Operations
+
+### Key Generation
+
+```go
+package main
+
+import (
+    "context"
+    "crypto/elliptic"
+    "github.com/lamassuiot/lamassuiot/engines/crypto/aws/v3"
+)
+
+func main() {
+    engine, _ := aws.NewAWSKMSEngine(logger, awsConfig, metadata)
+    
+    // RSA key
+    keyID, signer, err := engine.CreateRSAPrivateKey(context.Background(), 4096)
+    
+    // ECDSA key
+    keyID, signer, err := engine.CreateECDSAPrivateKey(context.Background(), elliptic.P384())
+}
+```
+
+### Key Import
+
+```go
+// Import existing RSA key to AWS KMS
+privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+keyID, signer, err := engine.ImportRSAPrivateKey(privateKey)
+
+// Import ECDSA key
+ecdsaKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+keyID, signer, err := engine.ImportECDSAPrivateKey(ecdsaKey)
+```
+
+### Signing
+
+```go
+// All engines return crypto.Signer
+signer, err := engine.GetPrivateKeyByID(keyID)
+
+// Sign digest
+digest := sha256.Sum256([]byte("message"))
+signature, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="PKCS#11: Could not configure driver">
+    **Cause:** Module path incorrect or HSM not initialized.
+    
+    **Solution:**
+    ```bash
+    # Verify module exists
+    ls -l /usr/lib/softhsm/libsofthsm2.so
+    
+    # Check token status
+    pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --list-slots
+    ```
+  </Accordion>
+  
+  <Accordion title="AWS KMS: Access Denied">
+    **Cause:** IAM policy missing required permissions.
+    
+    **Solution:**
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "kms:CreateKey",
+            "kms:Sign",
+            "kms:GetPublicKey",
+            "kms:DescribeKey",
+            "kms:CreateAlias"
+          ],
+          "Resource": "*"
+        }
+      ]
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Vault: Could not login">
+    **Cause:** Invalid AppRole credentials or role not configured.
+    
+    **Solution:**
+    ```bash
+    # Verify AppRole
+    vault read auth/approle/role/lamassu
+    
+    # Test login
+    vault write auth/approle/login \
+      role_id=$ROLE_ID \
+      secret_id=$SECRET_ID
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Storage Engines" icon="database" href="/engines/storage-engines">
+    Configure PostgreSQL for CA and device storage
+  </Card>
+  
+  <Card title="Event Bus" icon="bolt" href="/engines/event-bus">
+    Set up AMQP or AWS SNS/SQS for events
+  </Card>
+</CardGroup>

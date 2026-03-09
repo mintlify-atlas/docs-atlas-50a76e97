@@ -1,122 +1,176 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Lamassu IoT",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#9c9c9c",
+    "light": "#434242",
+    "dark": "#cecece"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/6cd4e38b-a9ca-4855-8238-8e40c455102f.png",
+  "logo": {
+    "light": "https://media.brand.dev/6cd4e38b-a9ca-4855-8238-8e40c455102f.png",
+    "dark": "https://media.brand.dev/6cd4e38b-a9ca-4855-8238-8e40c455102f.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/lamassuiot/lamassuiot"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/lamassuiot/lamassuiot"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "architecture"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Deployment",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "deployment/overview",
+              "deployment/monolithic",
+              "deployment/kubernetes",
+              "deployment/configuration"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "concepts/certificate-authorities",
+              "concepts/device-management",
+              "concepts/key-management",
+              "concepts/enrollment"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "User Guides",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/managing-cas",
+              "guides/device-lifecycle",
+              "guides/est-enrollment",
+              "guides/filtering-sorting",
+              "guides/issuance-profiles"
+            ]
+          },
+          {
+            "group": "Engines & Connectors",
+            "pages": [
+              "engines/overview",
+              "engines/crypto-engines",
+              "engines/storage-engines",
+              "engines/event-bus",
+              "connectors/aws-iot"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/authentication",
+              "security/authorization",
+              "security/best-practices"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/backup-restore",
+              "operations/troubleshooting"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "API Overview",
             "pages": [
-              "api-reference/introduction"
+              "api/overview",
+              "api/authentication",
+              "api/filtering"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Certificate Authority API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/ca/overview",
+              "api/ca/cas",
+              "api/ca/certificates",
+              "api/ca/issuance-profiles",
+              "api/ca/stats"
+            ]
+          },
+          {
+            "group": "Device Manager API",
+            "pages": [
+              "api/device-manager/overview",
+              "api/device-manager/devices",
+              "api/device-manager/device-groups",
+              "api/device-manager/stats"
+            ]
+          },
+          {
+            "group": "DMS Manager API",
+            "pages": [
+              "api/dms-manager/overview",
+              "api/dms-manager/dms",
+              "api/dms-manager/est-enrollment"
+            ]
+          },
+          {
+            "group": "Key Management API",
+            "pages": [
+              "api/kms/overview",
+              "api/kms/engines",
+              "api/kms/keys",
+              "api/kms/operations"
+            ]
+          },
+          {
+            "group": "Alerts API",
+            "pages": [
+              "api/alerts/overview",
+              "api/alerts/endpoints"
+            ]
+          },
+          {
+            "group": "Validation Authority API",
+            "pages": [
+              "api/va/overview",
+              "api/va/endpoints"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
+        "groups": [
+          {
+            "group": "Go SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/installation",
+              "sdk/ca-client",
+              "sdk/device-manager-client",
+              "sdk/dms-manager-client",
+              "sdk/kms-client"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,405 @@
+---
+title: 'Storage Engines'
+description: 'Persistent storage for CAs, certificates, devices, and audit logs'
+---
+
+## Overview
+
+Storage engines provide persistent data storage for:
+
+- **CA Certificates** - Root and intermediate CAs
+- **Issued Certificates** - Device and service certificates
+- **Devices** - Device inventory and metadata
+- **DMS** - Device Manufacturing Service configurations
+- **Events** - Audit logs and event history
+- **Subscriptions** - Alert subscription rules
+
+All storage engines implement the `StorageEngine` interface from `github.com/lamassuiot/lamassuiot/core/v3/pkg/engines/storage`.
+
+## PostgreSQL Storage Engine
+
+Production-grade storage using PostgreSQL with automatic schema migrations.
+
+**Import Path:**
+```go
+import "github.com/lamassuiot/lamassuiot/engines/storage/postgres/v3"
+```
+
+### Features
+
+- **Database Isolation** - Separate databases per service
+- **Automatic Migrations** - Schema versioning with go-migrate
+- **JSONB Support** - Flexible metadata storage
+- **Full-Text Search** - Device and certificate search
+- **Connection Pooling** - Configurable pool size
+- **TLS Support** - Encrypted connections
+
+### Configuration
+
+```yaml
+storage:
+  provider: postgres
+  config:
+    hostname: postgres.lamassu.svc.cluster.local
+    port: 5432
+    username: lamassu
+    password: ${POSTGRES_PASSWORD}
+```
+
+**Config Struct:**
+```go
+type PostgresPSEConfig struct {
+    Hostname string
+    Port     int
+    Username string
+    Password config.Password
+}
+```
+
+### Database Schema
+
+The engine creates separate databases for each service:
+
+| Database | Purpose | Tables |
+|----------|---------|--------|
+| `ca` | CA certificates and issuance profiles | `cas`, `certificates`, `issuance_profiles` |
+| `devicemanager` | Device inventory | `devices`, `device_slots` |
+| `dmsmanager` | DMS configurations | `dms`, `dms_bindings` |
+| `alerts` | Event subscriptions | `events`, `subscriptions` |
+| `va` | Validation authority | `ocsp_cache` |
+| `kms` | Key management | `keys`, `key_metadata` |
+
+### Connection String Format
+
+Generated automatically by the engine:
+
+```
+postgres://username:password@hostname:port/dbname?sslmode=disable
+```
+
+For production with TLS:
+
+```
+postgres://username:password@hostname:port/dbname?sslmode=require&sslrootcert=/etc/ssl/certs/ca.pem
+```
+
+### Migrations
+
+Schema migrations are embedded in the binary and applied automatically on startup.
+
+**Migration Structure:**
+```
+engines/storage/postgres/migrations/
+├── ca/
+│   ├── 20250123125500_ca_aws_metadata.go
+│   ├── 20250226114600_ca_add_kids.go
+│   └── 20250908074250_add_profile_id.go
+├── devicemanager/
+│   └── 20250925120000_remove_serial_hyphens.go
+└── dmsmanager/
+    └── 20241230124809_serverkeygen_revokereenroll.go
+```
+
+**Migration Example:**
+```go
+func up(db *sql.DB) error {
+    _, err := db.Exec(`
+        ALTER TABLE cas ADD COLUMN profile_id VARCHAR(255);
+        CREATE INDEX idx_cas_profile_id ON cas(profile_id);
+    `)
+    return err
+}
+```
+
+### Repository Pattern
+
+The storage engine implements repository interfaces:
+
+```go
+type StorageEngine interface {
+    GetCAStorage() (CACertificatesRepo, error)
+    GetCertStorage() (CertificatesRepo, error)
+    GetDeviceStorage() (DeviceManagerRepo, error)
+    GetDMSStorage() (DMSRepo, error)
+    GetEnventsStorage() (EventRepository, error)
+    GetSubscriptionsStorage() (SubscriptionsRepository, error)
+}
+```
+
+**Usage:**
+```go
+engine, err := postgres.NewStorageEngine(logger, config)
+
+// Get CA repository
+caRepo, err := engine.GetCAStorage()
+
+// Store CA certificate
+err = caRepo.Create(ctx, caCertificate)
+
+// Query certificates
+certs, err := caRepo.List(ctx, filters)
+```
+
+### Performance Tuning
+
+**Connection Pool:**
+```yaml
+storage:
+  provider: postgres
+  config:
+    hostname: postgres.example.com
+    port: 5432
+    username: lamassu
+    password: ${DB_PASSWORD}
+    max_open_conns: 25
+    max_idle_conns: 5
+    conn_max_lifetime: 5m
+```
+
+**Indexes:**
+The schema includes indexes for common queries:
+
+```sql
+-- Certificate lookups
+CREATE INDEX idx_certificates_serial ON certificates(serial_number);
+CREATE INDEX idx_certificates_status ON certificates(status);
+CREATE INDEX idx_certificates_issuer ON certificates(issuer_ca_id);
+
+-- Device queries
+CREATE INDEX idx_devices_dms ON devices(dms_id);
+CREATE INDEX idx_devices_metadata ON devices USING GIN(metadata);
+```
+
+### Backup and Recovery
+
+**Backup:**
+```bash
+# Dump all Lamassu databases
+for db in ca devicemanager dmsmanager alerts va kms; do
+  pg_dump -h postgres.example.com \
+    -U lamassu \
+    -d $db \
+    -F custom \
+    -f lamassu-${db}-$(date +%Y%m%d).dump
+done
+```
+
+**Restore:**
+```bash
+pg_restore -h postgres.example.com \
+  -U lamassu \
+  -d ca \
+  --clean \
+  --if-exists \
+  lamassu-ca-20240115.dump
+```
+
+### High Availability
+
+**PostgreSQL HA Setup:**
+
+```yaml
+# Primary
+storage:
+  provider: postgres
+  config:
+    hostname: postgres-primary.example.com
+    port: 5432
+
+# With read replicas (future support)
+storage:
+  provider: postgres
+  config:
+    hostname: postgres-primary.example.com
+    port: 5432
+    read_replicas:
+      - postgres-replica-1.example.com:5432
+      - postgres-replica-2.example.com:5432
+```
+
+## Setup Guide
+
+### Docker Compose
+
+```yaml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lamassu
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_MULTIPLE_DATABASES: ca,devicemanager,dmsmanager,alerts,va,kms
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/create-multiple-dbs.sh:/docker-entrypoint-initdb.d/create-dbs.sh
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres-data:
+```
+
+**Database Initialization Script:**
+```bash
+#!/bin/bash
+# create-multiple-dbs.sh
+set -e
+
+for db in ca devicemanager dmsmanager alerts va kms; do
+  echo "Creating database: $db"
+  psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
+    CREATE DATABASE $db;
+    GRANT ALL PRIVILEGES ON DATABASE $db TO $POSTGRES_USER;
+EOSQL
+done
+```
+
+### Kubernetes
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+type: Opaque
+stringData:
+  password: changeme
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_USER
+          value: lamassu
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 50Gi
+```
+
+## Monitoring
+
+### Metrics
+
+The storage engine exposes Prometheus metrics:
+
+```
+# Database connections
+lamassu_storage_postgres_connections{database="ca",state="idle"} 3
+lamassu_storage_postgres_connections{database="ca",state="active"} 2
+
+# Query duration
+lamassu_storage_query_duration_seconds{operation="get_ca"} 0.012
+
+# Query errors
+lamassu_storage_errors_total{database="ca",operation="create_cert"} 0
+```
+
+### Health Checks
+
+```go
+func (s *PostgresStorageEngine) HealthCheck(ctx context.Context) error {
+    db, err := s.GetCAStorage()
+    if err != nil {
+        return err
+    }
+    
+    return db.Ping(ctx)
+}
+```
+
+**HTTP Health Endpoint:**
+```bash
+curl http://localhost:8080/health/storage
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection Refused">
+    **Symptoms:**
+    ```
+    could not create postgres client: dial tcp: connect: connection refused
+    ```
+    
+    **Solutions:**
+    - Verify PostgreSQL is running: `pg_isready -h localhost`
+    - Check firewall rules allow port 5432
+    - Verify hostname resolves: `nslookup postgres.example.com`
+  </Accordion>
+  
+  <Accordion title="Authentication Failed">
+    **Symptoms:**
+    ```
+    pq: password authentication failed for user "lamassu"
+    ```
+    
+    **Solutions:**
+    - Verify credentials in configuration
+    - Check `pg_hba.conf` allows connections:
+      ```
+      host all lamassu 0.0.0.0/0 md5
+      ```
+    - Test connection: `psql -h postgres.example.com -U lamassu -d ca`
+  </Accordion>
+  
+  <Accordion title="Migration Failed">
+    **Symptoms:**
+    ```
+    migration failed: duplicate key value violates unique constraint
+    ```
+    
+    **Solutions:**
+    - Check migration version: `SELECT version FROM schema_migrations;`
+    - Rollback failed migration manually
+    - Drop and recreate database (development only)
+  </Accordion>
+</AccordionGroup>
+
+## Source Code
+
+- **Engine:** `engines/storage/postgres/engine.go:31`
+- **Configuration:** `engines/storage/postgres/config/config.go:5`
+- **Migrations:** `engines/storage/postgres/migrations/`
+- **Repositories:** `engines/storage/postgres/{castore,certstore,devicemanager,dmsmanager}.go`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Event Bus" icon="bolt" href="/engines/event-bus">
+    Configure AMQP or AWS for event streaming
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore storage repository interfaces
+  </Card>
+</CardGroup>

@@ -1,80 +1,289 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart'
+description: 'Get Lamassu IoT running locally in under 5 minutes'
+icon: 'rocket'
 ---
 
-## Get started in three steps
+This guide will help you run Lamassu IoT locally in development mode. You'll have a fully functional PKI platform running on your machine with all services, a web dashboard, and supporting infrastructure.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before you begin, ensure you have the following installed:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Go 1.24+" icon="code">
+    [Download and install Go](https://go.dev/doc/install) from the official website
+  </Card>
+  <Card title="Docker" icon="docker">
+    Required for PostgreSQL, RabbitMQ, and other dependencies
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  The development launcher automatically manages Docker containers for all required infrastructure components.
 </Note>
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Lamassu IoT repository from GitHub:
+
+    ```bash
+    git clone https://github.com/lamassuiot/lamassuiot.git
+    cd lamassuiot
+    ```
+  </Step>
+
+  <Step title="Synchronize Go workspace">
+    The repository uses [Go workspaces](https://go.dev/doc/tutorial/workspaces) to manage multiple modules. Synchronize the workspace and tidy dependencies:
+
+    ```bash
+    go work sync
+    go mod tidy -e ./...
+    ```
+
+    <Note>
+      The `go.work` file orchestrates modules located in `backend/`, `connectors/`, `core/`, `engines/`, `sdk/`, and `shared/`.
+    </Note>
+  </Step>
+
+  <Step title="Run the development server">
+    Launch all Lamassu services with a single command:
+
+    ```bash
+    go run ./monolithic/cmd/development/main.go
+    ```
+
+    The development launcher will:
+    - Start Docker containers for PostgreSQL and RabbitMQ
+    - Initialize all backend services (CA, KMS, Device Manager, DMS Manager, VA, Alerts)
+    - Launch the web UI
+    - Configure service routing and API gateway
+
+    <Warning>
+      On first run, Docker will download required images. This may take a few minutes depending on your connection.
+    </Warning>
+  </Step>
+
+  <Step title="Wait for startup">
+    When the application is ready, you'll see the Lamassu logo and this message:
+
+    ```
+    ========== READY TO LAUNCH MONOLITHIC PKI ==========
+    ==================== Available Crypto Engines ==========================
+    filesystem-test-1
+    ========================================================================
+    ```
+  </Step>
+</Steps>
+
+## Access the Platform
+
+Once started, Lamassu IoT is available at:
+
+<CardGroup cols={2}>
+  <Card title="HTTPS (Recommended)" icon="lock">
+    ```
+    https://localhost:8443
+    ```
+    Uses a self-signed certificate (you'll see a browser warning)
+  </Card>
+  <Card title="HTTP" icon="globe">
+    ```
+    http://localhost:8080
+    ```
+    Unencrypted connection for local testing
+  </Card>
+</CardGroup>
+
+### API Access
+
+The REST API is available by adding `/api` to the URL path:
+
+<CodeGroup>
+```bash HTTPS
+curl -k https://localhost:8443/api/ca/v1/health
+```
+
+```bash HTTP
+curl http://localhost:8080/api/ca/v1/health
+```
+</CodeGroup>
+
+<Note>
+  The `-k` flag in curl bypasses certificate validation for the self-signed certificate.
+</Note>
+
+## Development Configuration
+
+The development launcher supports several command-line flags for customization:
+
+### Crypto Engines
+
+By default, the filesystem crypto engine is used. You can enable additional engines:
+
+```bash
+# Enable multiple crypto engines
+go run ./monolithic/cmd/development/main.go \
+  --cryptoengines=filesystem,vault,aws-kms
+```
+
+Available crypto engines:
+- `filesystem` - File-based key storage (default)
+- `vault` - HashiCorp Vault integration
+- `aws-kms` - AWS Key Management Service
+- `aws-secrets` - AWS Secrets Manager
+- `pkcs11` - Hardware Security Module (HSM) support
+
+### Event Bus Options
+
+```bash
+# Use in-memory event bus (no Docker)
+go run ./monolithic/cmd/development/main.go --inmemory-eventbus
+
+# Use AWS event bus
+go run ./monolithic/cmd/development/main.go --use-aws-eventbus
+
+# Disable event bus entirely
+go run ./monolithic/cmd/development/main.go --disable-eventbus
+```
+
+### Storage Options
+
+```bash
+# Use SQLite instead of PostgreSQL
+go run ./monolithic/cmd/development/main.go --sqlite
+```
+
+### Sample Data
+
+```bash
+# Populate with sample CAs, devices, and certificates
+go run ./monolithic/cmd/development/main.go --sample-data
+```
+
+### AWS IoT Integration
+
+```bash
+# Enable AWS IoT Manager connector
+go run ./monolithic/cmd/development/main.go \
+  --awsiot \
+  --awsiot-id=my-connector \
+  --awsiot-keyid=AKIAIOSFODNN7EXAMPLE \
+  --awsiot-keysecret=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
+  --awsiot-region=us-east-1
+```
+
+## Infrastructure Ports
+
+When running in default mode, the development launcher exposes these ports:
+
+| Service | Port | Access |
+|---------|------|--------|
+| Lamassu UI | Dynamic | Proxied through gateway |
+| Lamassu API | 8080, 8443 | HTTP and HTTPS |
+| PostgreSQL | 5432 | Database (internal) |
+| RabbitMQ Management | 15672 | Web UI |
+| RabbitMQ AMQP | 5672 | Message broker |
+| HashiCorp Vault | 8200 | If enabled |
+
+<Note>
+  Use `--standard-docker-ports=false` to randomize infrastructure ports and avoid conflicts.
+</Note>
+
+## Verify Installation
+
+Test your installation with these commands:
+
+<CodeGroup>
+```bash Check CA Service
+curl -k https://localhost:8443/api/ca/v1/health
+```
+
+```bash List Crypto Engines
+curl -k https://localhost:8443/api/kms/v1/crypto-engines
+```
+
+```bash Check Device Manager
+curl -k https://localhost:8443/api/devmanager/v1/health
+```
+</CodeGroup>
+
+## Cleanup
+
+To stop all services and clean up Docker containers:
+
+1. Press `Ctrl+C` in the terminal where the monolithic launcher is running
+2. The cleanup routine automatically stops and removes all Docker containers labeled with `group=lamassuiot-monolithic`
+
+<Warning>
+  All data in PostgreSQL and RabbitMQ is ephemeral and will be lost when containers are stopped.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" icon="diagram-project" href="/architecture">
+    Learn about Lamassu's system architecture and components
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/certificate-authorities">
+    Understand CAs, devices, and certificate lifecycle management
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the REST API for programmatic access
+  </Card>
+  <Card title="Production Deployment" icon="server" href="/deployment/overview">
+    Deploy Lamassu to production with Kubernetes and Helm
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Port Already in Use
+
+If ports 8080 or 8443 are already in use:
+
+```bash
+# Find process using the port
+lsof -i :8080
+
+# Or use randomized infrastructure ports
+go run ./monolithic/cmd/development/main.go --standard-docker-ports=false
+```
+
+### Docker Connection Issues
+
+Ensure Docker is running:
+
+```bash
+docker ps
+```
+
+If Docker isn't running, start the Docker daemon according to your platform's instructions.
+
+### Module Download Failures
+
+If you encounter Go module download errors:
+
+```bash
+# Clear module cache and retry
+go clean -modcache
+go work sync
+go mod tidy -e ./...
+```
+
+## Running Tests
+
+Run the test suite to verify your setup:
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests for a specific package
+go test ./backend/pkg/services/...
+
+# Run tests with verbose output
+go test -v ./...
+```

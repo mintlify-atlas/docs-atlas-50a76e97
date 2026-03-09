@@ -1,0 +1,300 @@
+---
+title: 'Device Statistics'
+description: 'Retrieve device counts and status distribution metrics'
+---
+
+## Get Device Statistics
+
+<api-endpoint method="GET" path="/api/devmanager/v1/stats" />
+
+Retrieve device statistics including total count and distribution across all status types. Supports filtering by DMS, tags, metadata, creation time, and other device fields.
+
+<Note>
+  **Important:** Filtering by status is not permitted on this endpoint. The API always returns the status distribution for all devices matching the other filter criteria.
+</Note>
+
+### Query Parameters
+
+<ParamField query="filter" type="string">
+  Filter expression to narrow statistics scope. Supports all device filter fields except `status`:
+  - `id` - Device identifier
+  - `dms_owner` - DMS identifier
+  - `tags` - Device tags
+  - `creation_timestamp` - Device creation time
+  - `metadata` - Device metadata (using JSONPath)
+  
+  See [filtering examples](#filtering-examples) below.
+</ParamField>
+
+### Response
+
+<ResponseField name="total" type="integer">
+  Total number of devices matching the filter criteria
+</ResponseField>
+
+<ResponseField name="status_distribution" type="object">
+  Device count for each status type. Keys are status values:
+  
+  <ResponseField name="NO_IDENTITY" type="integer">
+    Devices with no identity assigned
+  </ResponseField>
+  
+  <ResponseField name="ACTIVE" type="integer">
+    Active devices
+  </ResponseField>
+  
+  <ResponseField name="RENEWAL_WINDOW" type="integer">
+    Devices in certificate renewal window
+  </ResponseField>
+  
+  <ResponseField name="ABOUT_TO_EXPIRE" type="integer">
+    Devices with certificates about to expire
+  </ResponseField>
+  
+  <ResponseField name="EXPIRED" type="integer">
+    Devices with expired certificates
+  </ResponseField>
+  
+  <ResponseField name="REVOKED" type="integer">
+    Devices with revoked certificates
+  </ResponseField>
+  
+  <ResponseField name="DECOMMISSIONED" type="integer">
+    Decommissioned devices
+  </ResponseField>
+</ResponseField>
+
+### Example: All Devices
+
+Get statistics for all devices in the system:
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/stats" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "total": 150,
+  "status_distribution": {
+    "NO_IDENTITY": 10,
+    "ACTIVE": 100,
+    "RENEWAL_WINDOW": 15,
+    "ABOUT_TO_EXPIRE": 5,
+    "EXPIRED": 8,
+    "REVOKED": 7,
+    "DECOMMISSIONED": 5
+  }
+}
+```
+
+---
+
+## Filtering Examples
+
+### Filter by DMS
+
+Get statistics for devices managed by a specific DMS:
+
+```bash
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=dms_owner[eq]:dms-production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Filter by Tag
+
+Get statistics for devices with a specific tag:
+
+```bash
+# Case-sensitive tag search
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Case-insensitive tag search
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains_ic]:PRODUCTION" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Filter by Creation Date
+
+Get statistics for devices created after a specific date:
+
+```bash
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=creation_timestamp[af]:2024-01-01T00:00:00Z" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Get statistics for devices created in a date range:
+
+```bash
+# Devices created after Jan 1, 2024 and before Mar 1, 2026
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=creation_timestamp[af]:2024-01-01T00:00:00Z&filter=creation_timestamp[bf]:2026-03-01T00:00:00Z" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Multiple Filters
+
+Combine multiple filters to narrow the scope:
+
+```bash
+# Production devices managed by a specific DMS
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=dms_owner[eq]:dms-prod&filter=tags[contains]:production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Sensors created in the last 30 days
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:sensor&filter=creation_timestamp[af]:2026-02-07T00:00:00Z" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Filter by Metadata
+
+Use JSONPath to filter by metadata fields:
+
+```bash
+# Devices in a specific location (metadata)
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=metadata[jsonpath]:$.location[?(@=='warehouse-a')]" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Use Cases
+
+### Monitor Certificate Health
+
+Identify devices requiring attention based on certificate status:
+
+```bash
+# Get overall certificate health
+curl "https://your-instance.com/api/devmanager/v1/stats" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Example response showing certificate issues:
+
+```json
+{
+  "total": 500,
+  "status_distribution": {
+    "NO_IDENTITY": 5,
+    "ACTIVE": 450,
+    "RENEWAL_WINDOW": 20,
+    "ABOUT_TO_EXPIRE": 10,
+    "EXPIRED": 8,
+    "REVOKED": 5,
+    "DECOMMISSIONED": 2
+  }
+}
+```
+
+This shows:
+- 20 devices in renewal window (action recommended)
+- 10 devices about to expire (urgent action needed)
+- 8 devices with expired certificates (immediate action required)
+
+### DMS Capacity Planning
+
+Get device count per DMS to balance load:
+
+```bash
+# Statistics for DMS 1
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=dms_owner[eq]:dms-1" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Statistics for DMS 2
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=dms_owner[eq]:dms-2" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Environment-Specific Metrics
+
+Track device health across different environments:
+
+```bash
+# Production environment
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Staging environment
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:staging" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Development environment
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:development" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Device Type Analysis
+
+Break down statistics by device type:
+
+```bash
+# Sensor statistics
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:sensor" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Gateway statistics
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:gateway" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Controller statistics
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=tags[contains]:controller" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Error Responses
+
+### Invalid Filter
+
+Attempting to filter by status returns a `400 Bad Request`:
+
+```bash
+# This will fail
+curl "https://your-instance.com/api/devmanager/v1/stats?filter=status[eq]:ACTIVE" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Response:
+
+```json
+{
+  "err": "filtering by status is not permitted on stats endpoint"
+}
+```
+
+### Invalid Field
+
+Using an invalid filter field returns a `400 Bad Request`:
+
+```json
+{
+  "err": "invalid filter field 'invalid_field'"
+}
+```
+
+---
+
+## Related Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Device Group Statistics" icon="layer-group" href="/api/device-manager/device-groups#get-device-group-statistics">
+    Get statistics for a specific device group
+  </Card>
+  <Card title="List Devices" icon="microchip" href="/api/device-manager/devices#list-devices">
+    Retrieve individual device records
+  </Card>
+</CardGroup>
+
+## Notes
+
+<Note>
+  When no filters are provided, the endpoint returns statistics for **all devices** in the system.
+</Note>
+
+<Warning>
+  The `status` field cannot be used as a filter on this endpoint. To get devices with a specific status, use the [List Devices](/api/device-manager/devices#list-devices) endpoint with a status filter.
+</Warning>

@@ -1,0 +1,141 @@
+---
+title: 'Validation Authority API Overview'
+description: 'Certificate validation services including OCSP and CRL for Lamassu IoT Platform'
+---
+
+## Introduction
+
+The Validation Authority (VA) API provides certificate validation services for the Lamassu IoT Platform. It implements industry-standard protocols including OCSP (Online Certificate Status Protocol) and CRL (Certificate Revocation List) distribution, enabling real-time certificate status verification.
+
+## Base URL
+
+```
+/api/va/v1
+```
+
+## Authentication
+
+- **OCSP and CRL endpoints** are publicly accessible (no authentication required)
+- **VA role management endpoints** require Bearer token authentication with JWT tokens
+
+## API Groups
+
+The VA API is organized into three main groups:
+
+### OCSP Operations
+
+Online Certificate Status Protocol for real-time certificate validation:
+- HTTP GET method for OCSP requests
+- HTTP POST method for OCSP requests
+- Returns certificate status (good, revoked, unknown)
+
+### CRL Distribution
+
+Certificate Revocation List distribution:
+- Retrieve CRLs by Certificate Authority Subject Key Identifier (SKI)
+- Returns DER-encoded CRL data
+
+### VA Role Management
+
+Manage Validation Authority configurations per Certificate Authority:
+- Get VA role configuration
+- Update CRL generation settings
+- Configure automatic CRL refresh
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="OCSP Support" icon="shield-check">
+    Real-time certificate status checking via OCSP protocol (RFC 6960)
+  </Card>
+  <Card title="CRL Distribution" icon="list">
+    Distribute Certificate Revocation Lists for offline validation
+  </Card>
+  <Card title="Automatic CRL Generation" icon="rotate">
+    Configurable automatic CRL regeneration based on time intervals or revocation events
+  </Card>
+  <Card title="Per-CA Configuration" icon="sliders">
+    Independent VA configuration for each Certificate Authority
+  </Card>
+</CardGroup>
+
+## Certificate Validation Methods
+
+### OCSP (Online Certificate Status Protocol)
+
+**Use when:**
+- Real-time validation is required
+- Network connectivity is available
+- Minimal latency is needed
+- Certificate status must be current
+
+**Characteristics:**
+- Real-time status checks
+- Small response size
+- Requires network connectivity
+- Lower bandwidth than CRL for single checks
+
+### CRL (Certificate Revocation List)
+
+**Use when:**
+- Offline validation is needed
+- Validating many certificates
+- Network connectivity is intermittent
+- Caching is beneficial
+
+**Characteristics:**
+- Can be cached and used offline
+- Contains all revoked certificates
+- Larger download size
+- Periodic updates (based on refresh interval)
+
+## Common Use Cases
+
+### Real-Time Device Authentication
+
+Use OCSP to verify device certificates during connection establishment:
+
+1. Device presents certificate
+2. Server extracts certificate serial number and issuer
+3. Server queries OCSP endpoint
+4. Server accepts or rejects connection based on response
+
+### Offline Certificate Validation
+
+Download and cache CRLs for offline validation:
+
+1. Periodically download CRLs for all trusted CAs
+2. Cache CRLs locally
+3. Validate certificates against cached CRLs
+4. Refresh CRLs based on nextUpdate field
+
+### Certificate Revocation Workflow
+
+1. Certificate is revoked via CA API
+2. VA automatically regenerates CRL (if configured)
+3. OCSP responder immediately returns "revoked" status
+4. CRL is updated for offline validators
+
+## OCSP vs CRL Decision Guide
+
+| Requirement | Recommended Method |
+|-------------|-------------------|
+| Real-time status | OCSP |
+| Offline validation | CRL |
+| Low bandwidth per check | OCSP |
+| Validating many certificates | CRL |
+| Privacy concerns | CRL (no per-cert query) |
+| Minimal infrastructure | CRL |
+| Always-connected devices | OCSP |
+| Intermittent connectivity | CRL |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Validation Endpoints" icon="check-circle" href="/api/va/endpoints">
+    Learn about OCSP and CRL endpoints
+  </Card>
+  <Card title="VA Role Management" icon="gear" href="/api/va/endpoints">
+    Configure VA roles for Certificate Authorities
+  </Card>
+</CardGroup>

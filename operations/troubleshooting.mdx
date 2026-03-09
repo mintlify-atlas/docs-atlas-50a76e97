@@ -1,0 +1,755 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Lamassu IoT operations
+---
+
+This guide provides solutions to common operational issues encountered when running Lamassu IoT in production environments.
+
+## Database Issues
+
+### Connection Pool Exhausted
+
+**Symptoms:**
+- HTTP 500 errors from services
+- Logs showing "connection pool exhausted" or "too many clients"
+- Slow API response times
+
+**Diagnosis:**
+
+```bash
+# Check PostgreSQL connection count
+psql -h localhost -U postgres -c \
+  "SELECT count(*) FROM pg_stat_activity;"
+
+# Check max connections
+psql -h localhost -U postgres -c \
+  "SHOW max_connections;"
+
+# Identify connections by application
+psql -h localhost -U postgres -c \
+  "SELECT application_name, count(*) FROM pg_stat_activity 
+   GROUP BY application_name;"
+```
+
+**Solutions:**
+
+1. **Increase PostgreSQL max_connections:**
+   ```bash
+   # postgresql.conf
+   max_connections = 200  # Default is often 100
+   
+   # Restart PostgreSQL
+   systemctl restart postgresql
+   ```
+
+2. **Configure connection pooling in services:**
+   ```yaml
+   postgres:
+     max_open_connections: 25
+     max_idle_connections: 5
+     connection_max_lifetime_minutes: 10
+   ```
+
+3. **Use PgBouncer for connection pooling:**
+   ```ini
+   # /etc/pgbouncer/pgbouncer.ini
+   [databases]
+   lamassu = host=localhost port=5432 dbname=lamassu
+   
+   [pgbouncer]
+   pool_mode = transaction
+   max_client_conn = 1000
+   default_pool_size = 25
+   ```
+
+### Slow Queries
+
+**Symptoms:**
+- High API latency
+- Database CPU usage at 100%
+- Long-running queries in pg_stat_activity
+
+**Diagnosis:**
+
+```sql
+-- Find slow running queries
+SELECT pid, now() - pg_stat_activity.query_start AS duration, query, state
+FROM pg_stat_activity
+WHERE state != 'idle'
+ORDER BY duration DESC;
+
+-- Check for missing indexes
+SELECT schemaname, tablename, attname, n_distinct, correlation
+FROM pg_stats
+WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+  AND n_distinct > 100
+ORDER BY abs(correlation) ASC;
+
+-- Analyze query plan
+EXPLAIN ANALYZE
+SELECT * FROM certificates WHERE status = 'ACTIVE' AND expiration < NOW();
+```
+
+**Solutions:**
+
+1. **Add missing indexes:**
+   ```sql
+   -- Index on frequently queried columns
+   CREATE INDEX idx_certificates_status ON certificates(status);
+   CREATE INDEX idx_certificates_expiration ON certificates(expiration);
+   CREATE INDEX idx_devices_dms_id ON devices(dms_id);
+   ```
+
+2. **Update table statistics:**
+   ```sql
+   ANALYZE certificates;
+   ANALYZE devices;
+   ANALYZE cas;
+   ```
+
+3. **Optimize configuration for workload:**
+   ```bash
+   # postgresql.conf
+   shared_buffers = 4GB              # 25% of RAM
+   effective_cache_size = 12GB       # 75% of RAM
+   work_mem = 64MB                   # Per-operation memory
+   maintenance_work_mem = 1GB        # For VACUUM, indexes
+   random_page_cost = 1.1            # For SSD storage
+   ```
+
+### Database Migration Failures
+
+**Symptoms:**
+- Service fails to start
+- Logs showing "migration failed" or "schema version mismatch"
+
+**Diagnosis:**
+
+```sql
+-- Check current schema version
+SELECT * FROM goose_db_version ORDER BY version_id DESC LIMIT 5;
+
+-- Check for failed migrations
+SELECT * FROM goose_db_version WHERE is_applied = false;
+```
+
+**Solutions:**
+
+1. **Manually run migration:**
+   ```bash
+   # Using goose-lamassu tool
+   goose-lamassu -dir ./engines/storage/postgres/migrations/ca \
+     postgres "host=localhost user=postgres dbname=ca sslmode=disable" up
+   ```
+
+2. **Fix failed migration and retry:**
+   ```sql
+   -- Mark migration as not applied to retry
+   DELETE FROM goose_db_version WHERE version_id = 20250309120000;
+   ```
+
+3. **Restore from backup if corruption occurred:**
+   ```bash
+   pg_restore -d lamassu /backup/lamassu_latest.dump
+   ```
+
+<Warning>
+Always backup your database before attempting manual migration fixes.
+</Warning>
+
+## Certificate Issuance Issues
+
+### CA Not Found
+
+**Symptoms:**
+- HTTP 404 when signing certificates
+- Error: "CA with id 'xxx' not found"
+
+**Diagnosis:**
+
+```bash
+# List all CAs
+curl -H "Authorization: Bearer $TOKEN" \
+  https://lamassu.example.com/api/ca/v1/cas | jq
+
+# Get specific CA
+curl -H "Authorization: Bearer $TOKEN" \
+  https://lamassu.example.com/api/ca/v1/cas/{ca-id} | jq
+```
+
+**Solutions:**
+
+1. **Verify CA exists in database:**
+   ```sql
+   SELECT id, subject_common_name, status FROM cas WHERE id = 'your-ca-id';
+   ```
+
+2. **Check CA status:**
+   ```bash
+   # Ensure CA is in ACTIVE status, not EXPIRED or REVOKED
+   curl -H "Authorization: Bearer $TOKEN" \
+     https://lamassu.example.com/api/ca/v1/cas/{ca-id} | jq '.status'
+   ```
+
+3. **Recreate CA if missing:**
+   ```bash
+   curl -X POST https://lamassu.example.com/api/ca/v1/cas \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "id": "replacement-ca",
+       "type": "MANAGED",
+       "subject": {
+         "common_name": "Replacement CA",
+         "organization": "YourOrg"
+       },
+       "engine_id": "vault-engine",
+       "key_metadata": {"type": "RSA", "bits": 4096}
+     }'
+   ```
+
+### Crypto Engine Failures
+
+**Symptoms:**
+- Certificate signing fails with crypto errors
+- Timeouts during CA operations
+- Errors mentioning PKCS#11, Vault, or AWS KMS
+
+**PKCS#11 HSM Issues:**
+
+```bash
+# Test PKCS#11 module
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --list-slots
+
+# Check HSM connectivity
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+  --slot 0 --login --pin 1234 --list-objects
+
+# Verify token PIN
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+  --slot 0 --login --pin 1234 --test
+```
+
+**Common PKCS#11 fixes:**
+
+- Incorrect PIN: Update crypto engine configuration
+- Token not initialized: Initialize token with `pkcs11-tool`
+- HSM disconnected: Check network/USB connection
+- Session limit reached: Restart HSM or service
+
+**HashiCorp Vault Issues:**
+
+```bash
+# Check Vault status
+vault status
+
+# Test authentication
+vault login -method=approle role_id=$ROLE_ID secret_id=$SECRET_ID
+
+# List secrets
+vault kv list lamassu-pki/
+
+# Check Vault logs
+journalctl -u vault -n 100
+```
+
+**Common Vault fixes:**
+
+1. **Vault sealed:**
+   ```bash
+   vault operator unseal
+   # Or enable auto-unseal with cloud KMS
+   ```
+
+2. **Token expired:**
+   ```bash
+   # Generate new AppRole credentials
+   vault write -f auth/approle/role/lamassu/secret-id
+   # Update service configuration
+   ```
+
+3. **Permission denied:**
+   ```bash
+   # Verify policy allows CA operations
+   vault policy read lamassu-ca
+   
+   # Update policy if needed
+   vault policy write lamassu-ca - <<EOF
+   path "lamassu-pki/*" {
+     capabilities = ["create", "read", "update", "delete", "list"]
+   }
+   EOF
+   ```
+
+**AWS KMS Issues:**
+
+```bash
+# Test KMS access
+aws kms describe-key --key-id alias/lamassu-ca
+
+# Test encryption/decryption
+echo "test" | base64 > /tmp/plaintext.txt
+aws kms encrypt \
+  --key-id alias/lamassu-ca \
+  --plaintext fileb:///tmp/plaintext.txt \
+  --query CiphertextBlob \
+  --output text | base64 -d > /tmp/encrypted.bin
+
+# Check IAM permissions
+aws iam get-user
+aws iam list-attached-user-policies --user-name lamassu-service
+```
+
+**Common AWS KMS fixes:**
+
+1. **Insufficient permissions:**
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Action": [
+         "kms:Decrypt",
+         "kms:Encrypt",
+         "kms:GenerateDataKey",
+         "kms:DescribeKey",
+         "kms:CreateAlias",
+         "kms:Sign",
+         "kms:Verify"
+       ],
+       "Resource": "arn:aws:kms:us-east-1:123456789:key/*"
+     }]
+   }
+   ```
+
+2. **Region mismatch:**
+   ```yaml
+   # Ensure crypto engine config matches KMS key region
+   crypto_engines:
+     aws_kms:
+       - id: "aws-kms"
+         region: "us-east-1"  # Must match key region
+   ```
+
+## EST Enrollment Issues
+
+### 400 Bad Request
+
+**Symptoms:**
+- EST enrollment fails with HTTP 400
+- Error: "Invalid request body" or "Malformed CSR"
+
+**Diagnosis:**
+
+```bash
+# Verify CSR format
+base64 -d device.b64 | openssl req -inform DER -text -noout
+
+# Check for newlines in base64 (common issue)
+cat device.b64 | wc -l
+# Should output: 1 (single line)
+```
+
+**Solutions:**
+
+1. **Ensure base64 has no newlines:**
+   ```bash
+   # Correct: single-line base64
+   openssl req -in device.csr -outform DER | base64 -w 0 > device.b64
+   
+   # Wrong: multi-line base64
+   openssl req -in device.csr -outform DER | base64 > device.b64
+   ```
+
+2. **Verify Content-Type header:**
+   ```bash
+   curl -v -H "Content-Type: application/pkcs10" \
+     --data-binary "@device.b64" \
+     "https://est.example.com/.well-known/est/dms-01/simpleenroll"
+   ```
+
+3. **Validate CSR before sending:**
+   ```bash
+   # Check CSR is valid DER format
+   base64 -d device.b64 > device.der
+   openssl req -inform DER -in device.der -text -noout
+   ```
+
+### 401 Unauthorized
+
+**Symptoms:**
+- EST enrollment rejected
+- Error: "Client certificate not trusted" or "Authentication failed"
+
+**Diagnosis:**
+
+```bash
+# Test TLS handshake
+openssl s_client -connect est.example.com:443 \
+  -cert bootstrap.crt -key bootstrap.key -showcerts
+
+# Verify client certificate chain
+openssl verify -CAfile ca-bundle.pem bootstrap.crt
+
+# Check certificate issuer
+openssl x509 -in bootstrap.crt -noout -issuer
+```
+
+**Solutions:**
+
+1. **Verify DMS validation CA list:**
+   ```bash
+   curl -H "Authorization: Bearer $TOKEN" \
+     https://lamassu.example.com/api/dmsmanager/v1/dms/{dms-id} | \
+     jq '.settings.enrollment_settings.est_rfc7030_settings.authentication.client_certificate.validation_cas'
+   ```
+
+2. **Add bootstrap CA to validation list:**
+   ```bash
+   curl -X PATCH https://lamassu.example.com/api/dmsmanager/v1/dms/{dms-id} \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json-patch+json" \
+     -d '[{
+       "op": "add",
+       "path": "/settings/enrollment_settings/est_rfc7030_settings/authentication/client_certificate/validation_cas/-",
+       "value": "bootstrap-ca-id"
+     }]'
+   ```
+
+3. **Check certificate expiration:**
+   ```bash
+   openssl x509 -in bootstrap.crt -noout -dates
+   ```
+
+### 404 Not Found
+
+**Symptoms:**
+- EST endpoint returns 404
+- Error: "DMS not found"
+
+**Diagnosis:**
+
+```bash
+# Verify DMS exists
+curl -H "Authorization: Bearer $TOKEN" \
+  https://lamassu.example.com/api/dmsmanager/v1/dms | jq '.dms[].id'
+
+# Check DMS status
+curl -H "Authorization: Bearer $TOKEN" \
+  https://lamassu.example.com/api/dmsmanager/v1/dms/{dms-id}
+```
+
+**Solutions:**
+
+1. **Verify correct DMS ID in URL:**
+   ```bash
+   # Correct format
+   https://est.example.com/.well-known/est/{dms-id}/simpleenroll
+   
+   # Check available DMS instances
+   curl -H "Authorization: Bearer $TOKEN" \
+     https://lamassu.example.com/api/dmsmanager/v1/dms
+   ```
+
+2. **Create missing DMS:**
+   ```bash
+   curl -X POST https://lamassu.example.com/api/dmsmanager/v1/dms \
+     -H "Authorization: Bearer $TOKEN" \
+     -d '{
+       "id": "production-dms",
+       "name": "Production DMS",
+       "settings": {
+         "enrollment_settings": {
+           "protocol": "EST",
+           "device_provisioning_profile_id": "iot-profile"
+         }
+       }
+     }'
+   ```
+
+## Service Startup Failures
+
+### Service Won't Start
+
+**Symptoms:**
+- Systemd service fails to start
+- Service crashes immediately after launch
+
+**Diagnosis:**
+
+```bash
+# Check service status
+systemctl status lamassu-ca
+
+# View recent logs
+journalctl -u lamassu-ca -n 100 --no-pager
+
+# Check for port conflicts
+sudo netstat -tlnp | grep :8080
+
+# Verify configuration file syntax
+cat /etc/lamassu/ca-config.yaml | yq eval
+```
+
+**Common issues:**
+
+1. **Port already in use:**
+   ```bash
+   # Find process using port
+   sudo lsof -i :8080
+   
+   # Change port in configuration
+   # /etc/lamassu/ca-config.yaml
+   http:
+     port: 8081
+   ```
+
+2. **Database connection failure:**
+   ```bash
+   # Test database connectivity
+   psql -h localhost -U postgres -d lamassu -c "SELECT 1;"
+   
+   # Check database credentials in config
+   cat /etc/lamassu/ca-config.yaml | grep -A 5 postgres
+   ```
+
+3. **Missing environment variables:**
+   ```bash
+   # Check service environment
+   systemctl show lamassu-ca | grep Environment
+   
+   # Set required variables in systemd unit
+   # /etc/systemd/system/lamassu-ca.service
+   [Service]
+   Environment="VAULT_TOKEN=s.xxxxx"
+   Environment="DB_PASSWORD=secret"
+   ```
+
+4. **File permissions:**
+   ```bash
+   # Check config file ownership
+   ls -l /etc/lamassu/ca-config.yaml
+   
+   # Fix permissions
+   sudo chown lamassu:lamassu /etc/lamassu/ca-config.yaml
+   sudo chmod 640 /etc/lamassu/ca-config.yaml
+   ```
+
+### Memory Issues
+
+**Symptoms:**
+- Service OOM (out of memory) killed
+- Logs showing "cannot allocate memory"
+
+**Diagnosis:**
+
+```bash
+# Check memory usage
+free -h
+
+# Monitor process memory
+top -p $(pgrep lamassu-ca)
+
+# Check OOM killer logs
+dmesg | grep -i oom
+journalctl -k | grep -i oom
+```
+
+**Solutions:**
+
+1. **Increase container/VM memory:**
+   ```yaml
+   # Kubernetes
+   resources:
+     limits:
+       memory: 2Gi
+     requests:
+       memory: 1Gi
+   ```
+
+2. **Tune Go garbage collector:**
+   ```bash
+   # Increase GC target percentage (default 100)
+   export GOGC=200
+   
+   # Set memory limit
+   export GOMEMLIMIT=1800MiB  # Leave headroom
+   ```
+
+3. **Reduce database connection pool:**
+   ```yaml
+   postgres:
+     max_open_connections: 10  # Reduce from default 25
+   ```
+
+## Monitoring and Observability Issues
+
+### Metrics Not Appearing
+
+**Symptoms:**
+- Grafana shows no data
+- OTLP exporter errors in logs
+
+**Diagnosis:**
+
+```bash
+# Test OTLP collector connectivity
+curl http://otel-collector:4318/v1/metrics
+
+# Check service OTEL configuration
+cat /etc/lamassu/ca-config.yaml | grep -A 10 otel
+
+# Verify collector is receiving data
+curl http://otel-collector:8888/metrics | grep lamassu
+```
+
+**Solutions:**
+
+1. **Enable OTEL in service config:**
+   ```yaml
+   otel:
+     metrics:
+       enabled: true
+       hostname: "otel-collector"
+       port: 4318
+       scheme: "http"
+   ```
+
+2. **Check OTLP collector configuration:**
+   ```yaml
+   # otel-collector-config.yaml
+   receivers:
+     otlp:
+       protocols:
+         http:
+           endpoint: 0.0.0.0:4318
+   
+   exporters:
+     prometheus:
+       endpoint: 0.0.0.0:9090
+   
+   service:
+     pipelines:
+       metrics:
+         receivers: [otlp]
+         exporters: [prometheus]
+   ```
+
+3. **Verify network connectivity:**
+   ```bash
+   # From Lamassu service container
+   telnet otel-collector 4318
+   
+   # Check DNS resolution
+   nslookup otel-collector
+   ```
+
+### Traces Missing Context
+
+**Symptoms:**
+- Distributed traces show disconnected spans
+- No parent-child relationships in traces
+
+**Solutions:**
+
+1. **Enable trace propagation:**
+   ```yaml
+   otel:
+     traces:
+       enabled: true
+       hostname: "otel-collector"
+       port: 4318
+   ```
+
+2. **Verify HTTP instrumentation:**
+   ```go
+   // Services use otelhttp for automatic propagation
+   import "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+   ```
+
+3. **Check propagation headers:**
+   ```bash
+   curl -v https://lamassu.example.com/api/ca/v1/cas \
+     -H "traceparent: 00-<trace-id>-<span-id>-01"
+   ```
+
+## Performance Issues
+
+### Slow API Responses
+
+**Diagnosis checklist:**
+
+<Steps>
+  <Step title="Check HTTP Metrics">
+    ```promql
+    histogram_quantile(0.95, 
+      rate(http_server_duration_bucket[5m])
+    ) by (http_route)
+    ```
+  </Step>
+  
+  <Step title="Analyze Distributed Traces">
+    Find slow spans in Tempo/Jaeger to identify bottleneck (DB, crypto, network)
+  </Step>
+  
+  <Step title="Check Database Performance">
+    ```sql
+    SELECT query, calls, mean_exec_time, max_exec_time 
+    FROM pg_stat_statements 
+    ORDER BY mean_exec_time DESC LIMIT 10;
+    ```
+  </Step>
+  
+  <Step title="Monitor Crypto Engine Latency">
+    ```promql
+    histogram_quantile(0.95,
+      rate(crypto_operation_duration_seconds_bucket[5m])
+    ) by (engine_id)
+    ```
+  </Step>
+</Steps>
+
+**Common fixes:**
+
+- Add database indexes for frequently queried fields
+- Increase database shared_buffers and work_mem
+- Scale HSM/Vault infrastructure if crypto operations are slow
+- Add caching layer for frequently accessed CAs
+- Horizontal scaling of Lamassu services
+
+## Getting Help
+
+If you're unable to resolve an issue:
+
+<CardGroup cols={2}>
+  <Card title="Check Logs" icon="file-lines">
+    Review service logs with `journalctl` or your log aggregation system. Set log level to `debug` temporarily.
+  </Card>
+  
+  <Card title="GitHub Issues" icon="github">
+    Search existing issues or open a new one: [github.com/lamassuiot/lamassuiot/issues](https://github.com/lamassuiot/lamassuiot/issues)
+  </Card>
+  
+  <Card title="Community Discussions" icon="comments">
+    Ask questions in GitHub Discussions: [github.com/lamassuiot/lamassuiot/discussions](https://github.com/lamassuiot/lamassuiot/discussions)
+  </Card>
+  
+  <Card title="Documentation" icon="book">
+    Consult the official documentation: [www.lamassu.io/docs](https://www.lamassu.io/docs/)
+  </Card>
+</CardGroup>
+
+**When reporting issues, include:**
+
+- Lamassu version (`git describe --tags`)
+- Deployment method (Docker, Kubernetes, monolithic)
+- Relevant configuration (redact secrets)
+- Complete error messages and stack traces
+- Steps to reproduce the issue
+- Logs from affected services
+
+## Related Topics
+
+- [Monitoring](/operations/monitoring) - Observability and metrics
+- [Backup & Restore](/operations/backup-restore) - Data protection
+- [Security Best Practices](/security/best-practices) - Security hardening

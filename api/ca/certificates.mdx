@@ -1,0 +1,634 @@
+---
+title: 'Certificates'
+description: 'Certificate issuance and management operations'
+icon: 'file-certificate'
+---
+
+## List All Certificates
+
+<api method="GET" endpoint="/api/ca/v1/certificates" />
+
+Retrieve a paginated list of all certificates across all CAs.
+
+### Query Parameters
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination cursor from previous response
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field to sort results by
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression (e.g., `status[eq]=ACTIVE`)
+</ParamField>
+
+### Response
+
+<ResponseField name="list" type="array">
+  Array of certificate objects
+  
+  <ResponseField name="serial_number" type="string">
+    Certificate serial number
+  </ResponseField>
+  
+  <ResponseField name="subject" type="object">
+    Certificate subject information (common_name, organization, etc.)
+  </ResponseField>
+  
+  <ResponseField name="issuer" type="object">
+    Issuer subject information
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Certificate status: `ACTIVE`, `EXPIRED`, `REVOKED`, or `INACTIVE`
+  </ResponseField>
+  
+  <ResponseField name="type" type="string">
+    Certificate type: `MANAGED`, `IMPORTED_WITH_KEY`, or `IMPORTED_WITHOUT_KEY`
+  </ResponseField>
+  
+  <ResponseField name="valid_from" type="string">
+    Validity start timestamp (ISO 8601)
+  </ResponseField>
+  
+  <ResponseField name="valid_to" type="string">
+    Validity end timestamp (ISO 8601)
+  </ResponseField>
+  
+  <ResponseField name="key_metadata" type="object">
+    Key algorithm, size, and strength information
+  </ResponseField>
+  
+  <ResponseField name="issuer_metadata" type="object">
+    CA serial number, ID, and hierarchy level
+  </ResponseField>
+  
+  <ResponseField name="metadata" type="object">
+    Custom metadata key-value pairs
+  </ResponseField>
+  
+  <ResponseField name="revocation_timestamp" type="string">
+    Revocation timestamp if status is REVOKED
+  </ResponseField>
+  
+  <ResponseField name="revocation_reason" type="string">
+    Reason for revocation if applicable
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="next" type="string">
+  Pagination bookmark for next page
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/certificates?page_size=10" \
+  -H "Authorization: Bearer <token>"
+```
+
+### Example Response
+
+```json
+{
+  "list": [
+    {
+      "serial_number": "a1b2c3d4e5f67890",
+      "subject": {
+        "common_name": "device-001.iot.example.com",
+        "organization": "Lamassu IoT"
+      },
+      "issuer": {
+        "common_name": "Intermediate CA"
+      },
+      "status": "ACTIVE",
+      "type": "MANAGED",
+      "valid_from": "2024-01-15T10:00:00Z",
+      "valid_to": "2025-01-15T10:00:00Z",
+      "key_metadata": {
+        "type": "RSA",
+        "bits": 2048,
+        "strength": "medium"
+      },
+      "issuer_metadata": {
+        "serial_number": "1a2b3c4d",
+        "id": "intermediate-ca-1",
+        "level": 1
+      },
+      "metadata": {
+        "device_type": "sensor",
+        "location": "warehouse-a"
+      }
+    }
+  ],
+  "next": "eyJsYXN0X3NuIjoiYTFiMmMzZDQifQ=="
+}
+```
+
+---
+
+## List Certificates by Status
+
+<api method="GET" endpoint="/api/ca/v1/certificates/status/{status}" />
+
+Retrieve certificates filtered by a specific status.
+
+### Path Parameters
+
+<ParamField path="status" type="string" required>
+  Certificate status: `ACTIVE`, `EXPIRED`, `REVOKED`, or `INACTIVE`
+</ParamField>
+
+### Query Parameters
+
+Supports standard pagination and filtering parameters.
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/certificates/status/ACTIVE" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## List Certificates by Expiration
+
+<api method="GET" endpoint="/api/ca/v1/certificates/expiration" />
+
+Retrieve certificates expiring within a specific time window.
+
+### Query Parameters
+
+<ParamField query="expires_after" type="string">
+  Start of expiration window (ISO 8601 timestamp)
+</ParamField>
+
+<ParamField query="expires_before" type="string">
+  End of expiration window (ISO 8601 timestamp)
+</ParamField>
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination cursor
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field to sort results by
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort order: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/certificates/expiration?expires_before=2024-12-31T23:59:59Z" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Get Certificate by Serial Number
+
+<api method="GET" endpoint="/api/ca/v1/certificates/{sn}" />
+
+Retrieve a specific certificate by its serial number.
+
+### Path Parameters
+
+<ParamField path="sn" type="string" required>
+  Certificate serial number
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/certificates/a1b2c3d4e5f67890" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## List Certificates by CA
+
+<api method="GET" endpoint="/api/ca/v1/cas/{id}/certificates" />
+
+List all certificates issued by a specific CA.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Query Parameters
+
+Supports standard pagination and filtering parameters.
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/cas/intermediate-ca-1/certificates" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## List Certificates by CA and Status
+
+<api method="GET" endpoint="/api/ca/v1/cas/{id}/certificates/status/{status}" />
+
+List certificates issued by a specific CA filtered by status.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+<ParamField path="status" type="string" required>
+  Certificate status: `ACTIVE`, `EXPIRED`, `REVOKED`, or `INACTIVE`
+</ParamField>
+
+### Query Parameters
+
+Supports standard pagination and filtering parameters.
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/cas/intermediate-ca-1/certificates/status/ACTIVE" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Get Certificate by CA and Serial Number
+
+<api method="GET" endpoint="/api/ca/v1/cas/{id}/certificates/{sn}" />
+
+Retrieve a certificate by its serial number for a specific CA.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+<ParamField path="sn" type="string" required>
+  Certificate serial number
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-domain.com/api/ca/v1/cas/intermediate-ca-1/certificates/a1b2c3d4e5f67890" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Sign Certificate (Issue from CSR)
+
+<api method="POST" endpoint="/api/ca/v1/cas/{id}/certificates/sign" />
+
+Sign a Certificate Signing Request (CSR) with a CA to issue a new certificate.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="csr" type="object" required>
+  X509 certificate signing request (parsed representation)
+</ParamField>
+
+<ParamField body="profile_id" type="string">
+  Issuance profile ID to use (alternative to inline profile)
+</ParamField>
+
+<ParamField body="profile" type="object">
+  Complete issuance profile specification (alternative to profile_id)
+</ParamField>
+
+### Response
+
+Returns the issued certificate object.
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas/intermediate-ca-1/certificates/sign" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "csr": {
+      "subject": {
+        "common_name": "device-002.iot.example.com"
+      },
+      "public_key": "..."
+    },
+    "profile_id": "iot-device-profile"
+  }'
+```
+
+---
+
+## Import Certificate
+
+<api method="POST" endpoint="/api/ca/v1/certificates/import" />
+
+Import an existing certificate into the system.
+
+### Request Body
+
+<ParamField body="certificate" type="object" required>
+  X509 certificate (parsed representation)
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Custom metadata key-value pairs
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/certificates/import" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "certificate": {
+      "subject": {
+        "common_name": "imported-device.example.com"
+      }
+    },
+    "metadata": {
+      "source": "external-ca"
+    }
+  }'
+```
+
+---
+
+## Update Certificate Status
+
+<api method="PUT" endpoint="/api/ca/v1/certificates/{sn}/status" />
+
+Update the status of a certificate (e.g., to revoke it).
+
+### Path Parameters
+
+<ParamField path="sn" type="string" required>
+  Certificate serial number
+</ParamField>
+
+### Request Body
+
+<ParamField body="status" type="string" required>
+  New status: `ACTIVE`, `EXPIRED`, `REVOKED`, or `INACTIVE`
+</ParamField>
+
+<ParamField body="revocation_reason" type="string">
+  Reason for revocation (required when status is `REVOKED`)
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://your-domain.com/api/ca/v1/certificates/a1b2c3d4e5f67890/status" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "REVOKED",
+    "revocation_reason": "Key compromise"
+  }'
+```
+
+---
+
+## Update Certificate Metadata
+
+<api method="PUT" endpoint="/api/ca/v1/certificates/{sn}/metadata" />
+
+Replace certificate metadata entirely using JSON patch operations.
+
+### Path Parameters
+
+<ParamField path="sn" type="string" required>
+  Certificate serial number
+</ParamField>
+
+### Request Body
+
+<ParamField body="patches" type="array" required>
+  Array of JSON patch operations
+  
+  <ParamField body="op" type="string" required>
+    Operation: `add`, `remove`, `replace`, `move`, `copy`, or `test`
+  </ParamField>
+  
+  <ParamField body="path" type="string" required>
+    JSON pointer path to the target field
+  </ParamField>
+  
+  <ParamField body="value" type="any">
+    Value for the operation
+  </ParamField>
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://your-domain.com/api/ca/v1/certificates/a1b2c3d4e5f67890/metadata" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patches": [
+      {
+        "op": "replace",
+        "path": "/location",
+        "value": "warehouse-b"
+      }
+    ]
+  }'
+```
+
+---
+
+## Patch Certificate Metadata
+
+<api method="PATCH" endpoint="/api/ca/v1/certificates/{sn}/metadata" />
+
+Partially update certificate metadata.
+
+### Path Parameters
+
+<ParamField path="sn" type="string" required>
+  Certificate serial number
+</ParamField>
+
+### Request Body
+
+Same as Update Certificate Metadata (JSON patch operations).
+
+---
+
+## Delete Certificate
+
+<api method="DELETE" endpoint="/api/ca/v1/certificates/{sn}" />
+
+Delete a certificate from the system.
+
+### Path Parameters
+
+<ParamField path="sn" type="string" required>
+  Certificate serial number
+</ParamField>
+
+### Response
+
+Returns `204 No Content` on successful deletion.
+
+### Example Request
+
+```bash
+curl -X DELETE "https://your-domain.com/api/ca/v1/certificates/a1b2c3d4e5f67890" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
+## Sign Arbitrary Message
+
+<api method="POST" endpoint="/api/ca/v1/cas/{id}/signature/sign" />
+
+Sign an arbitrary message using a CA's private key.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="message" type="string" required>
+  Base64-encoded message to sign
+</ParamField>
+
+<ParamField body="message_type" type="string" required>
+  Type of message being signed
+</ParamField>
+
+<ParamField body="signature_algorithm" type="string" required>
+  Signature algorithm to use
+</ParamField>
+
+### Response
+
+<ResponseField name="signed_data" type="string">
+  Base64-encoded signature
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas/root-ca-1/signature/sign" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "SGVsbG8gV29ybGQ=",
+    "message_type": "raw",
+    "signature_algorithm": "SHA256WithRSA"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "signed_data": "YXNkZmFzZGZhc2Rm..."
+}
+```
+
+---
+
+## Verify Signature
+
+<api method="POST" endpoint="/api/ca/v1/cas/{id}/signature/verify" />
+
+Verify a signature using a CA's public key.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Certificate authority identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="signature" type="string" required>
+  Base64-encoded signature to verify
+</ParamField>
+
+<ParamField body="message" type="string" required>
+  Base64-encoded original message
+</ParamField>
+
+<ParamField body="message_type" type="string" required>
+  Type of message
+</ParamField>
+
+<ParamField body="signature_algorithm" type="string" required>
+  Signature algorithm used
+</ParamField>
+
+### Response
+
+<ResponseField name="valid" type="boolean">
+  Whether the signature is valid
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST "https://your-domain.com/api/ca/v1/cas/root-ca-1/signature/verify" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signature": "YXNkZmFzZGZhc2Rm...",
+    "message": "SGVsbG8gV29ybGQ=",
+    "message_type": "raw",
+    "signature_algorithm": "SHA256WithRSA"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "valid": true
+}
+```

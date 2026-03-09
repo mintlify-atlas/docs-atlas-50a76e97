@@ -1,0 +1,502 @@
+---
+title: 'Key Lifecycle Operations'
+description: 'Create, import, update, and manage cryptographic keys'
+---
+
+## List Keys
+
+<api method="GET" endpoint="/keys" />
+
+Retrieve a paginated list of all keys with optional filtering.
+
+### Query Parameters
+
+<ParamField query="limit" type="integer" default="20">
+  Maximum number of keys to return
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of keys to skip
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Bookmark for cursor-based pagination
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression for keys (e.g., `engine_id[eq]golang`, `algorithm[eq]RSA`, `tags[contains]production`)
+</ParamField>
+
+### Response
+
+<ResponseField name="next_bookmark" type="string">
+  Bookmark for retrieving the next page of results
+</ResponseField>
+
+<ResponseField name="list" type="array">
+  Array of key objects
+  <Expandable title="Key Object">
+    <ResponseField name="key_id" type="string">
+      Unique identifier for the key
+    </ResponseField>
+    <ResponseField name="pkcs11_uri" type="string">
+      PKCS#11 URI for the key
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Human-readable name
+    </ResponseField>
+    <ResponseField name="aliases" type="array">
+      Alternative names for the key
+    </ResponseField>
+    <ResponseField name="engine_id" type="string">
+      ID of the crypto engine managing this key
+    </ResponseField>
+    <ResponseField name="has_private_key" type="boolean">
+      Indicates if the private key is available
+    </ResponseField>
+    <ResponseField name="algorithm" type="string">
+      Cryptographic algorithm: `RSA`, `ECDSA`, or `Ed25519`
+    </ResponseField>
+    <ResponseField name="size" type="integer">
+      Key size in bits
+    </ResponseField>
+    <ResponseField name="public_key" type="string">
+      Base64 encoded public key
+    </ResponseField>
+    <ResponseField name="creation_ts" type="string" format="date-time">
+      Timestamp when the key was created
+    </ResponseField>
+    <ResponseField name="tags" type="array">
+      Tags for categorization and filtering
+    </ResponseField>
+    <ResponseField name="metadata" type="object">
+      Additional metadata as key-value pairs
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/keys?limit=10&filter=algorithm[eq]RSA" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "next_bookmark": "eyJrZXlfaWQiOiJrZXktMTIzIn0=",
+  "list": [
+    {
+      "key_id": "key-123e4567-e89b-12d3-a456-426614174000",
+      "pkcs11_uri": "pkcs11:token-id=engine1;id=key123;type=private",
+      "name": "my-signing-key",
+      "aliases": ["prod-key", "primary-key"],
+      "engine_id": "aws-kms-prod",
+      "has_private_key": true,
+      "algorithm": "RSA",
+      "size": 2048,
+      "public_key": "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0...",
+      "creation_ts": "2025-11-07T10:00:00Z",
+      "tags": ["production", "signing"],
+      "metadata": {
+        "department": "security",
+        "owner": "admin"
+      }
+    }
+  ]
+}
+```
+
+---
+
+## Create Key
+
+<api method="POST" endpoint="/keys" />
+
+Create a new cryptographic key with specified algorithm and size.
+
+### Request Body
+
+<ParamField body="algorithm" type="string" required>
+  Cryptographic algorithm: `RSA`, `ECDSA`, or `Ed25519`
+</ParamField>
+
+<ParamField body="size" type="integer" required>
+  Key size in bits:
+  - RSA: 2048, 3072, 4096
+  - ECDSA: 256 (P-256), 384 (P-384), 521 (P-521)
+  - Ed25519: (size ignored)
+</ParamField>
+
+<ParamField body="engine_id" type="string" required>
+  ID of the crypto engine to create the key in
+</ParamField>
+
+<ParamField body="name" type="string">
+  Human-readable name for the key
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Array of tags for categorization
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Additional metadata as key-value pairs
+</ParamField>
+
+### Response
+
+Returns the created key object with generated `key_id` and public key.
+
+### Example Request
+
+```bash
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "algorithm": "RSA",
+    "size": 2048,
+    "engine_id": "aws-kms-prod",
+    "name": "my-new-signing-key",
+    "tags": ["production", "signing"],
+    "metadata": {
+      "purpose": "certificate-signing",
+      "owner": "pki-team"
+    }
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "key_id": "key-789abc12-def3-45gh-ij67-klmnopqrstuv",
+  "pkcs11_uri": "pkcs11:token-id=aws-kms-prod;id=key789;type=private",
+  "name": "my-new-signing-key",
+  "aliases": [],
+  "engine_id": "aws-kms-prod",
+  "has_private_key": true,
+  "algorithm": "RSA",
+  "size": 2048,
+  "public_key": "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0...",
+  "creation_ts": "2025-11-08T14:30:00Z",
+  "tags": ["production", "signing"],
+  "metadata": {
+    "purpose": "certificate-signing",
+    "owner": "pki-team"
+  }
+}
+```
+
+---
+
+## Import Key
+
+<api method="POST" endpoint="/keys/import" />
+
+Import an existing private key into the KMS.
+
+### Request Body
+
+<ParamField body="private_key" type="string" required>
+  Base64 encoded private key in PEM or DER format
+</ParamField>
+
+<ParamField body="engine_id" type="string" required>
+  ID of the crypto engine to import the key into
+</ParamField>
+
+<ParamField body="name" type="string">
+  Human-readable name for the key
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Array of tags for categorization
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Additional metadata as key-value pairs
+</ParamField>
+
+### Response
+
+Returns the imported key object.
+
+### Example Request
+
+```bash
+# First, encode your private key to base64
+BASE64_KEY=$(cat private-key.pem | base64 -w 0)
+
+curl -X POST "https://api.lamassu.io/api/kms/v1/keys/import" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "private_key": "'"$BASE64_KEY"'",
+    "engine_id": "golang",
+    "name": "imported-legacy-key",
+    "tags": ["imported", "legacy"],
+    "metadata": {
+      "source": "legacy-system",
+      "imported_date": "2025-11-08"
+    }
+  }'
+```
+
+---
+
+## Get Key by ID
+
+<api method="GET" endpoint="/keys/{id}" />
+
+Retrieve detailed information about a specific key.
+
+<ParamField path="id" type="string" required>
+  Key identifier
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/keys/key-123e4567-e89b-12d3-a456-426614174000" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Delete Key
+
+<api method="DELETE" endpoint="/keys/{id}" />
+
+Delete a key from the KMS.
+
+<Warning>
+  This operation is irreversible. Ensure you have backups or that the key is no longer needed before deletion.
+</Warning>
+
+<ParamField path="id" type="string" required>
+  Key identifier
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Deletion status: `deleted`
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X DELETE "https://api.lamassu.io/api/kms/v1/keys/key-123e4567-e89b-12d3-a456-426614174000" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Update Key Name
+
+<api method="PUT" endpoint="/keys/{id}/name" />
+
+Update the human-readable name of a key.
+
+<ParamField path="id" type="string" required>
+  Key identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  New name for the key
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://api.lamassu.io/api/kms/v1/keys/key-123/name" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "updated-key-name"
+  }'
+```
+
+---
+
+## Update Key Tags
+
+<api method="PUT" endpoint="/keys/{id}/tags" />
+
+Update the tags associated with a key.
+
+<ParamField path="id" type="string" required>
+  Key identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="tags" type="array" required>
+  New set of tags for the key (replaces all existing tags)
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://api.lamassu.io/api/kms/v1/keys/key-123/tags" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tags": ["production", "updated", "v2", "critical"]
+  }'
+```
+
+---
+
+## Update Key Aliases
+
+<api method="PUT" endpoint="/keys/{id}/alias" />
+
+Update the aliases for a key using JSON Patch operations.
+
+<ParamField path="id" type="string" required>
+  Key identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="patches" type="array" required>
+  Array of JSON Patch operations
+  <Expandable title="Patch Operation">
+    <ParamField body="op" type="string" required>
+      Operation type: `add`, `remove`, `replace`, `move`, `copy`, or `test`
+    </ParamField>
+    <ParamField body="path" type="string" required>
+      JSON Pointer path to the field
+    </ParamField>
+    <ParamField body="value" type="any">
+      Value for the operation
+    </ParamField>
+    <ParamField body="from" type="string">
+      Source path for move/copy operations
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://api.lamassu.io/api/kms/v1/keys/key-123/alias" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patches": [
+      {
+        "op": "add",
+        "path": "/-",
+        "value": "new-alias"
+      }
+    ]
+  }'
+```
+
+---
+
+## Update Key Metadata
+
+<api method="PUT" endpoint="/keys/{id}/metadata" />
+
+Update the metadata of a key using JSON Patch operations.
+
+<ParamField path="id" type="string" required>
+  Key identifier
+</ParamField>
+
+### Request Body
+
+<ParamField body="patches" type="array" required>
+  Array of JSON Patch operations (RFC 6902)
+  <Expandable title="Patch Operation">
+    <ParamField body="op" type="string" required>
+      Operation type: `add`, `remove`, `replace`, `move`, `copy`, or `test`
+    </ParamField>
+    <ParamField body="path" type="string" required>
+      JSON Pointer path (e.g., `/metadata/owner`, `/metadata/department`)
+    </ParamField>
+    <ParamField body="value" type="any">
+      Value for the operation
+    </ParamField>
+    <ParamField body="from" type="string">
+      Source path for move/copy operations
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT "https://api.lamassu.io/api/kms/v1/keys/key-123/metadata" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "patches": [
+      {
+        "op": "add",
+        "path": "/new-field",
+        "value": "new-value"
+      },
+      {
+        "op": "replace",
+        "path": "/owner",
+        "value": "new-owner"
+      },
+      {
+        "op": "remove",
+        "path": "/old-field"
+      }
+    ]
+  }'
+```
+
+---
+
+## Key Filtering Examples
+
+The KMS API supports powerful filtering capabilities. Here are some common examples:
+
+### Filter by Engine
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/keys?filter=engine_id[eq]aws-kms-prod" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Filter by Algorithm
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/keys?filter=algorithm[eq]RSA" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Filter by Tags
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/keys?filter=tags[contains]production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Filter by Metadata
+
+```bash
+curl -X GET "https://api.lamassu.io/api/kms/v1/keys?filter=metadata.owner[eq]security-team" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Complex Filters
+
+```bash
+# Keys with RSA algorithm AND production tag
+curl -X GET "https://api.lamassu.io/api/kms/v1/keys?filter=algorithm[eq]RSA;tags[contains]production" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```

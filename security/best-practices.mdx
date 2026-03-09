@@ -1,0 +1,690 @@
+---
+title: Security Best Practices
+description: Comprehensive security hardening guide for Lamassu IoT deployments
+---
+
+This guide provides security best practices for deploying and operating Lamassu IoT in production environments. Follow these recommendations to harden your PKI infrastructure and protect device identities.
+
+## PKI Security Fundamentals
+
+### Certificate Authority Protection
+
+CA private keys are the most critical assets in your PKI infrastructure.
+
+<Warning>
+**Root CA Offline Storage:** Keep root CA private keys offline in a hardware security module (HSM). Only bring online for subordinate CA signing operations.
+</Warning>
+
+**Recommended CA hierarchy:**
+
+```
+Root CA (offline, 10-year validity)
+ └── Intermediate CA (online, 5-year validity)
+     ├── Issuing CA - Manufacturing (2-year validity)
+     ├── Issuing CA - Fleet Operations (2-year validity)
+     └── Issuing CA - Development (1-year validity)
+```
+
+**Implementation:**
+
+```json
+{
+  "type": "MANAGED",
+  "issuance_profile_id": "intermediate-ca-profile",
+  "engine_id": "vault-hsm-engine",
+  "subject": {
+    "common_name": "Lamassu Intermediate CA",
+    "organization": "YourOrg",
+    "country": "US"
+  },
+  "key_metadata": {
+    "type": "RSA",
+    "bits": 4096
+  },
+  "ca_expiration": {
+    "type": "duration",
+    "duration": "43800h"
+  }
+}
+```
+
+### Hardware Security Modules (HSM)
+
+Lamassu supports multiple crypto engines for CA key storage:
+
+| Engine | Security Level | Use Case |
+|--------|---------------|----------|
+| **PKCS#11 HSM** | Highest | Production root and intermediate CAs |
+| **HashiCorp Vault** | High | Production issuing CAs, key management |
+| **AWS KMS** | High | Cloud-native deployments |
+| **AWS Secrets Manager** | Medium | Non-CA secrets, configuration |
+| **Software (Golang)** | Low | Development only |
+
+**PKCS#11 HSM Configuration:**
+
+```yaml
+crypto_engines:
+  pkcs11:
+    - id: "production-hsm"
+      token: "LamassuCA"
+      pin: "${HSM_PIN}"  # Use environment variable
+      module_path: "/usr/lib/softhsm/libsofthsm2.so"
+```
+
+**HashiCorp Vault Configuration:**
+
+```yaml
+crypto_engines:
+  hashicorp_vault:
+    - id: "vault-engine"
+      role_id: "${VAULT_ROLE_ID}"
+      secret_id: "${VAULT_SECRET_ID}"
+      auto_unseal_enabled: true
+      mount_path: "lamassu-pki"
+      address: "https://vault.internal:8200"
+```
+
+<Tip>
+Use Vault's auto-unseal feature with cloud KMS (AWS, Azure, GCP) to protect Vault's master key while enabling automatic recovery.
+</Tip>
+
+**AWS KMS Configuration:**
+
+```yaml
+crypto_engines:
+  aws_kms:
+    - id: "aws-kms-engine"
+      region: "us-east-1"
+      key_spec: "RSA_4096"
+      key_usage: "SIGN_VERIFY"
+```
+
+### Key Algorithm and Size Recommendations
+
+**Certificate authority keys:**
+
+```json
+{
+  "key_metadata": {
+    "type": "RSA",
+    "bits": 4096
+  }
+}
+```
+
+**Device certificates:**
+
+```json
+{
+  "key_metadata": {
+    "type": "RSA",
+    "bits": 2048
+  }
+}
+```
+
+**Alternative: ECDSA for constrained devices:**
+
+```json
+{
+  "key_metadata": {
+    "type": "ECDSA",
+    "bits": 256
+  }
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="RSA 4096" icon="key">
+    Recommended for CAs. Provides strong security margin for long-lived certificates.
+  </Card>
+  
+  <Card title="RSA 2048" icon="key">
+    Suitable for device certificates with shorter validity periods (≤2 years).
+  </Card>
+  
+  <Card title="ECDSA P-256" icon="microchip">
+    Ideal for resource-constrained IoT devices. Smaller key size, faster operations.
+  </Card>
+  
+  <Card title="ECDSA P-384" icon="shield">
+    Higher security level for sensitive applications requiring ECC.
+  </Card>
+</CardGroup>
+
+## Network Security
+
+### TLS Configuration
+
+Enforce TLS 1.2 or higher for all Lamassu service communication:
+
+```yaml
+http:
+  port: 8443
+  protocol: https
+  tls:
+    cert_file: "/etc/lamassu/tls/server.crt"
+    key_file: "/etc/lamassu/tls/server.key"
+    min_version: "TLS12"
+    cipher_suites:
+      - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+      - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+      - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+      - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+```
+
+**Disable insecure protocols:**
+- ❌ SSL v2/v3
+- ❌ TLS 1.0
+- ❌ TLS 1.1
+- ✅ TLS 1.2
+- ✅ TLS 1.3
+
+### Network Segmentation
+
+Isolate Lamassu components in separate network zones:
+
+```
+┌─────────────────────────────────────────────┐
+│  DMZ (Internet-Facing)                      │
+│  ┌──────────────┐                           │
+│  │ DMS Manager  │ (EST endpoints)           │
+│  └──────────────┘                           │
+└─────────────────────────────────────────────┘
+         │
+         │ Firewall
+         ▼
+┌─────────────────────────────────────────────┐
+│  Internal Application Zone                  │
+│  ┌────────┐  ┌─────────┐  ┌──────────────┐ │
+│  │ CA API │  │ Device  │  │ Alerts       │ │
+│  │        │  │ Manager │  │ Service      │ │
+│  └────────┘  └─────────┘  └──────────────┘ │
+└─────────────────────────────────────────────┘
+         │
+         │ Firewall
+         ▼
+┌─────────────────────────────────────────────┐
+│  Data Zone                                  │
+│  ┌──────────┐  ┌───────┐  ┌──────────────┐ │
+│  │ Postgres │  │ Vault │  │ RabbitMQ     │ │
+│  └──────────┘  └───────┘  └──────────────┘ │
+└─────────────────────────────────────────────┘
+```
+
+**Firewall rules:**
+- Allow inbound HTTPS (443) to DMS Manager from device networks
+- Allow internal communication between services
+- Deny direct database access from DMZ
+- Log and alert on unauthorized connection attempts
+
+### mTLS for Inter-Service Communication
+
+Enable mutual TLS between Lamassu services:
+
+```yaml
+http:
+  client_auth:
+    enabled: true
+    ca_file: "/etc/lamassu/tls/internal-ca.crt"
+    required: true
+```
+
+## Authentication and Authorization
+
+### EST Authentication Hardening
+
+<Warning>
+**Never use NoAuth in production.** The NoAuth EST profile bypasses all authentication and should only be used in isolated development environments.
+</Warning>
+
+**Production DMS configuration:**
+
+```json
+{
+  "id": "production-dms",
+  "settings": {
+    "enrollment_settings": {
+      "protocol": "EST",
+      "est_rfc7030_settings": {
+        "authentication": {
+          "type": "client_certificate",
+          "client_certificate": {
+            "validation_cas": ["bootstrap-ca-id"],
+            "require_valid_chain": true,
+            "check_revocation": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Bootstrap certificate policy:**
+- Issue bootstrap certificates with short validity (30-90 days)
+- Limit bootstrap certificate usage to single enrollment
+- Rotate bootstrap CAs annually
+- Monitor bootstrap certificate usage patterns
+
+### JWT Token Security
+
+Implement JWT best practices:
+
+```yaml
+identity_extractors:
+  jwt:
+    enabled: true
+    validate_signature: true  # Always validate in production
+    issuer: "https://idp.yourorg.com"
+    audience: "lamassu-api"
+    public_key_url: "https://idp.yourorg.com/.well-known/jwks.json"
+    required_claims:
+      - sub
+      - exp
+      - iat
+```
+
+**Token hygiene:**
+- Use short expiration times (15-60 minutes)
+- Implement token refresh flows
+- Revoke tokens on logout
+- Rotate signing keys regularly
+- Never log or persist tokens
+
+### Role-Based Access Control
+
+Implement least-privilege access:
+
+```json
+{
+  "roles": {
+    "device-provisioner": {
+      "permissions": [
+        "device:create",
+        "device:read",
+        "certificate:read"
+      ]
+    },
+    "ca-operator": {
+      "permissions": [
+        "ca:read",
+        "ca:create",
+        "certificate:issue",
+        "certificate:revoke"
+      ]
+    },
+    "platform-admin": {
+      "permissions": ["*:*"]
+    }
+  }
+}
+```
+
+## Database Security
+
+### PostgreSQL Hardening
+
+**Connection security:**
+
+```yaml
+postgres:
+  hostname: "postgres.internal"
+  port: 5432
+  username: "lamassu_app"
+  password: "${DB_PASSWORD}"  # Use environment variable
+  sslmode: "require"
+  sslcert: "/etc/lamassu/db/client.crt"
+  sslkey: "/etc/lamassu/db/client.key"
+  sslrootcert: "/etc/lamassu/db/ca.crt"
+```
+
+**Database-level security:**
+
+```sql
+-- Create dedicated user per service
+CREATE USER ca_service WITH PASSWORD 'strong-random-password';
+CREATE USER device_manager WITH PASSWORD 'strong-random-password';
+
+-- Create schemas
+CREATE SCHEMA ca;
+CREATE SCHEMA devicemanager;
+
+-- Grant minimum required permissions
+GRANT USAGE ON SCHEMA ca TO ca_service;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ca TO ca_service;
+
+GRANT USAGE ON SCHEMA devicemanager TO device_manager;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA devicemanager TO device_manager;
+
+-- Revoke public access
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+```
+
+**Encryption at rest:**
+
+Enable PostgreSQL transparent data encryption:
+
+```bash
+# Initialize encrypted PostgreSQL cluster
+initdb --data-checksums --encoding=UTF8 --locale=en_US.UTF-8 \
+  -D /var/lib/postgresql/data
+
+# Configure encryption in postgresql.conf
+ssl = on
+ssl_cert_file = '/var/lib/postgresql/server.crt'
+ssl_key_file = '/var/lib/postgresql/server.key'
+ssl_ca_file = '/var/lib/postgresql/ca.crt'
+```
+
+### Backup Security
+
+Protect database backups:
+
+```bash
+#!/bin/bash
+# Encrypted backup script
+
+BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="lamassu_backup_${BACKUP_DATE}.sql.gpg"
+
+# Dump and encrypt
+pg_dump -h localhost -U postgres lamassu | \
+  gpg --encrypt --recipient backup@yourorg.com \
+  > /backup/${BACKUP_FILE}
+
+# Upload to secure storage
+aws s3 cp /backup/${BACKUP_FILE} \
+  s3://yourorg-lamassu-backups/ \
+  --sse aws:kms \
+  --sse-kms-key-id arn:aws:kms:us-east-1:123456789:key/abc-def
+
+# Retain backups for 90 days
+find /backup -name "lamassu_backup_*.sql.gpg" -mtime +90 -delete
+```
+
+## Monitoring and Logging
+
+### Security Event Logging
+
+Enable comprehensive security logging:
+
+```yaml
+logs:
+  level: info
+  security_events:
+    enabled: true
+    log_authentication: true
+    log_authorization: true
+    log_ca_operations: true
+    log_certificate_issuance: true
+```
+
+**Critical events to monitor:**
+
+<CardGroup cols={2}>
+  <Card title="Failed Authentications" icon="user-slash">
+    Multiple failed authentication attempts may indicate brute force attacks.
+  </Card>
+  
+  <Card title="CA Operations" icon="stamp">
+    All CA creation, deletion, and signing operations should be logged and alerted.
+  </Card>
+  
+  <Card title="Certificate Revocations" icon="ban">
+    Unexpected revocations may indicate compromise.
+  </Card>
+  
+  <Card title="DMS Configuration Changes" icon="gear">
+    Changes to validation CA lists alter trust boundaries.
+  </Card>
+</CardGroup>
+
+### Observability Stack
+
+Deploy Lamassu with OpenTelemetry for comprehensive monitoring:
+
+```yaml
+otel:
+  metrics:
+    enabled: true
+    interval_in_millis: 10000
+    hostname: "otel-collector.internal"
+    port: 4318
+    scheme: "https"
+  traces:
+    enabled: true
+    hostname: "otel-collector.internal"
+    port: 4318
+    scheme: "https"
+  logging:
+    enabled: true
+    hostname: "otel-collector.internal"
+    port: 4318
+    scheme: "https"
+```
+
+**Key metrics to track:**
+
+- Certificate issuance rate
+- Certificate expiration distribution
+- EST enrollment success/failure rates
+- API latency percentiles (p50, p95, p99)
+- Database connection pool utilization
+- Crypto engine operation latency
+
+### Security Alerts
+
+Configure alerts for security events:
+
+```bash
+# Create alert subscription for failed enrollments
+curl -X POST https://lamassu.example.com/api/alerts/v1/subscriptions \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "event_type": "enrollment.failed",
+    "filters": {
+      "reason": "authentication_failure"
+    },
+    "threshold": {
+      "count": 10,
+      "window_minutes": 5
+    },
+    "actions": [
+      {
+        "type": "webhook",
+        "url": "https://alerts.yourorg.com/lamassu"
+      }
+    ]
+  }'
+```
+
+## Certificate Lifecycle Security
+
+### Validity Periods
+
+Set appropriate certificate validity periods:
+
+| Certificate Type | Recommended Validity | Rationale |
+|-----------------|---------------------|------------|
+| Root CA | 10-20 years | Rare rotation, high trust anchor |
+| Intermediate CA | 5-10 years | Balance stability and agility |
+| Issuing CA | 2-5 years | Frequent enough for crypto agility |
+| Device Certificate | 1-2 years | Automated renewal, limit compromise window |
+| Bootstrap Certificate | 30-90 days | Single-use, short-lived |
+
+### Automated Renewal
+
+Implement automated certificate renewal:
+
+```json
+{
+  "renewal_policy": {
+    "renewal_window_days": 30,
+    "auto_renew_enabled": true,
+    "notification_days_before_expiry": [60, 30, 7, 1]
+  }
+}
+```
+
+Devices should re-enroll during the renewal window:
+
+```bash
+#!/bin/bash
+# Device certificate renewal script
+
+CERT_FILE="/etc/device/cert.pem"
+KEY_FILE="/etc/device/key.pem"
+DMS_URL="https://est.example.com/.well-known/est/production-dms"
+
+# Check expiration
+EXPIRY=$(openssl x509 -in $CERT_FILE -noout -enddate | cut -d= -f2)
+EXPIRY_EPOCH=$(date -d "$EXPIRY" +%s)
+NOW_EPOCH=$(date +%s)
+DAYS_REMAINING=$(( ($EXPIRY_EPOCH - $NOW_EPOCH) / 86400 ))
+
+# Renew if within 30 days of expiration
+if [ $DAYS_REMAINING -lt 30 ]; then
+  echo "Certificate expires in $DAYS_REMAINING days, renewing..."
+  
+  # Generate new CSR
+  openssl req -new -key $KEY_FILE -out /tmp/renew.csr \
+    -subj "/CN=$(hostname)/O=YourOrg"
+  
+  # Re-enroll using current certificate
+  openssl req -in /tmp/renew.csr -outform DER | base64 -w 0 > /tmp/renew.b64
+  
+  curl -k --cert $CERT_FILE --key $KEY_FILE \
+    -H "Content-Type: application/pkcs10" \
+    --data-binary "@/tmp/renew.b64" \
+    "$DMS_URL/simplereenroll" -o /tmp/renewed.b64
+  
+  # Install new certificate
+  base64 -d /tmp/renewed.b64 | \
+    openssl pkcs7 -inform DER -print_certs -out /tmp/renewed.pem
+  
+  mv /tmp/renewed.pem $CERT_FILE
+  systemctl reload device-agent
+fi
+```
+
+### Revocation
+
+Implement robust certificate revocation:
+
+**CRL distribution:**
+
+```json
+{
+  "crl_distribution_points": [
+    "http://crl.yourorg.com/ca/production-ca.crl"
+  ],
+  "crl_update_interval_hours": 6
+}
+```
+
+**OCSP responder:**
+
+```bash
+# Configure OCSP in issuance profile
+curl -X POST https://lamassu.example.com/api/ca/v1/issuanceprofiles \
+  -d '{
+    "id": "iot-profile",
+    "ca_id": "production-ca",
+    "extensions": {
+      "authority_info_access": {
+        "ocsp_server": ["http://ocsp.yourorg.com"]
+      }
+    }
+  }'
+```
+
+## Incident Response
+
+### Compromise Response Plan
+
+**If a device certificate is compromised:**
+
+1. **Immediately revoke certificate:**
+   ```bash
+   curl -X POST https://lamassu.example.com/api/ca/v1/certificates/{cert-id}/revoke \
+     -d '{"reason": "key_compromise"}'
+   ```
+
+2. **Identify affected devices and scope**
+
+3. **Block network access for compromised device**
+
+4. **Investigate how compromise occurred**
+
+5. **Re-provision device with new certificate after remediation**
+
+**If a CA key is compromised:**
+
+1. **Immediately offline the CA**
+
+2. **Revoke all certificates issued by the CA**
+
+3. **Publish emergency CRL**
+
+4. **Notify all relying parties**
+
+5. **Create new CA and re-issue all certificates**
+
+6. **Conduct forensic investigation**
+
+7. **Update trust stores to remove compromised CA**
+
+### Security Checklist
+
+<Steps>
+  <Step title="Crypto Engine Security">
+    - [ ] Root CA keys stored offline in HSM
+    - [ ] Issuing CA keys in FIPS 140-2 Level 2+ HSM or Vault
+    - [ ] No production keys in software crypto engine
+    - [ ] HSM backup and disaster recovery tested
+  </Step>
+  
+  <Step title="Network Security">
+    - [ ] TLS 1.2+ enforced on all services
+    - [ ] Network segmentation implemented
+    - [ ] Firewall rules restricting database access
+    - [ ] mTLS enabled for inter-service communication
+  </Step>
+  
+  <Step title="Authentication & Authorization">
+    - [ ] No EST NoAuth profiles in production
+    - [ ] JWT signature validation enabled
+    - [ ] Bootstrap certificates with short validity
+    - [ ] RBAC roles defined and enforced
+  </Step>
+  
+  <Step title="Database Security">
+    - [ ] PostgreSQL SSL/TLS enabled
+    - [ ] Dedicated database users per service
+    - [ ] Encryption at rest enabled
+    - [ ] Encrypted backups to secure storage
+  </Step>
+  
+  <Step title="Monitoring & Logging">
+    - [ ] OpenTelemetry configured
+    - [ ] Security events logged
+    - [ ] Alerts for failed authentications
+    - [ ] Alerts for CA operations
+    - [ ] Certificate expiration monitoring
+  </Step>
+  
+  <Step title="Certificate Lifecycle">
+    - [ ] Appropriate validity periods configured
+    - [ ] Automated renewal implemented
+    - [ ] CRL distribution points configured
+    - [ ] OCSP responder available (if applicable)
+  </Step>
+</Steps>
+
+## Related Topics
+
+- [Authentication](/security/authentication) - Authentication methods
+- [Authorization](/security/authorization) - Access control
+- [Monitoring](/operations/monitoring) - Observability and metrics
+- [Backup & Restore](/operations/backup-restore) - Data protection

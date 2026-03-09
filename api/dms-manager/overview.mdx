@@ -1,0 +1,88 @@
+---
+title: 'DMS Manager API Overview'
+description: 'Device Management Service API for managing registration authorities and EST enrollment flows'
+---
+
+## Introduction
+
+The DMS Manager API provides comprehensive device management capabilities for the Lamassu IoT Platform. It enables you to manage Device Management Service (DMS) instances and handle EST (Enrollment over Secure Transport) enrollment flows according to RFC 7030.
+
+## Base URL
+
+```
+/api/dmsmanager/v1
+```
+
+## Authentication
+
+The DMS Manager API uses Bearer token authentication with JWT tokens for most endpoints. EST endpoints use mutual TLS (client certificate) authentication.
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  https://your-domain.com/api/dmsmanager/v1/v1/dms
+```
+
+## API Groups
+
+The DMS Manager API is organized into two main groups:
+
+### DMS Operations
+
+Manage the complete lifecycle of DMS instances:
+- Create, read, update, and delete DMS instances
+- Update DMS metadata
+- Bind identity certificates to devices
+- Retrieve DMS statistics
+
+### EST Enrollment
+
+Handle EST enrollment operations according to RFC 7030:
+- Retrieve CA certificates for enrollment
+- Simple enrollment and re-enrollment
+- Server-side key generation
+- Support for authentication profile selectors (APS)
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="DMS Lifecycle" icon="rotate">
+    Complete CRUD operations for managing DMS instances with configurable enrollment settings
+  </Card>
+  <Card title="EST RFC 7030" icon="certificate">
+    Full support for EST enrollment flows including simpleenroll, simplereenroll, and serverkeygen
+  </Card>
+  <Card title="Flexible Authentication" icon="shield">
+    Support for multiple authentication modes including client certificates and external webhooks
+  </Card>
+  <Card title="Device Provisioning" icon="microchip">
+    Automatic device registration with JITP (Just-In-Time Provisioning) or pre-registration
+  </Card>
+</CardGroup>
+
+## Common Use Cases
+
+### Device Enrollment
+
+1. Create a DMS instance with enrollment settings
+2. Configure authentication requirements
+3. Devices connect via EST endpoints to enroll
+4. Receive certificates automatically or via approval workflow
+
+### Certificate Renewal
+
+Devices can renew certificates before expiration using the simplereenroll endpoint with configurable renewal windows.
+
+### Server Key Generation
+
+For constrained devices, enable server-side key generation where the server creates and securely delivers the private key.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="DMS Operations" icon="server" href="/api/dms-manager/dms">
+    Learn about DMS CRUD operations
+  </Card>
+  <Card title="EST Enrollment" icon="key" href="/api/dms-manager/est-enrollment">
+    Explore EST enrollment endpoints
+  </Card>
+</CardGroup>

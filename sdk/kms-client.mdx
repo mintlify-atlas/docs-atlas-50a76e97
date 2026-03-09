@@ -1,0 +1,613 @@
+---
+title: KMS Client
+description: Key Management Service operations using the Go SDK
+---
+
+The KMS Client provides comprehensive key management operations including key generation, import, signing, verification, and lifecycle management.
+
+## Initialization
+
+Create a KMS client instance:
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+)
+
+kmsClient := sdk.NewHttpKMSClient(httpClient, "https://kms.lamassu.example.com")
+```
+
+## Key Operations
+
+### Create a Key
+
+Generate a new cryptographic key:
+
+```go
+import (
+    "context"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+)
+
+key, err := kmsClient.CreateKey(context.Background(), services.CreateKeyInput{
+    Algorithm: "RSA",
+    Size:      4096,
+    EngineID:  "default",
+    Name:      "device-signing-key",
+    Tags:      []string{"signing", "device", "production"},
+    Metadata: map[string]interface{}{
+        "purpose":     "device signing",
+        "environment": "production",
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Created key: %s", key.ID)
+```
+
+### Create ECDSA Key
+
+Generate an elliptic curve key:
+
+```go
+key, err := kmsClient.CreateKey(context.Background(), services.CreateKeyInput{
+    Algorithm: "ECDSA",
+    Size:      256, // P-256 curve
+    EngineID:  "default",
+    Name:      "ecdsa-signing-key",
+    Tags:      []string{"ecdsa", "signing"},
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Import a Key
+
+Import an existing private key:
+
+```go
+import (
+    "crypto/rsa"
+    "crypto/ecdsa"
+)
+
+var privateKey interface{} // *rsa.PrivateKey or *ecdsa.PrivateKey
+// ... load private key ...
+
+key, err := kmsClient.ImportKey(context.Background(), services.ImportKeyInput{
+    PrivateKey: privateKey,
+    EngineID:   "default",
+    Name:       "imported-key",
+    Tags:       []string{"imported"},
+    Metadata: map[string]interface{}{
+        "source": "external-hsm",
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Imported key: %s", key.ID)
+```
+
+### Get Key by ID
+
+Retrieve a specific key:
+
+```go
+key, err := kmsClient.GetKey(context.Background(), services.GetKeyInput{
+    Identifier: "key-001",
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Key: %s, Algorithm: %s, Size: %d", key.Name, key.Algorithm, key.Size)
+```
+
+### List All Keys
+
+Retrieve all keys with pagination:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/resources"
+
+var keys []*models.Key
+
+_, err := kmsClient.GetKeys(context.Background(), services.GetKeysInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        PageSize: 100,
+        Sort: resources.SortOptions{
+            SortField: "created_at",
+            SortMode:  resources.SortModeDesc,
+        },
+    },
+    ApplyFunc: func(key models.Key) {
+        keys = append(keys, &key)
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Found %d keys", len(keys))
+```
+
+### Update Key Name
+
+Rename a key:
+
+```go
+key, err := kmsClient.UpdateKeyName(context.Background(), services.UpdateKeyNameInput{
+    ID:   "key-001",
+    Name: "production-signing-key",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Update Key Tags
+
+Update key tags:
+
+```go
+key, err := kmsClient.UpdateKeyTags(context.Background(), services.UpdateKeyTagsInput{
+    ID:   "key-001",
+    Tags: []string{"signing", "production", "critical"},
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Update Key Metadata
+
+Update key metadata using JSON patches:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+
+key, err := kmsClient.UpdateKeyMetadata(context.Background(),
+    services.UpdateKeyMetadataInput{
+        ID: "key-001",
+        Patches: []models.MetadataPatch{
+            {
+                Op:    "add",
+                Path:  "rotation_date",
+                Value: "2026-12-31",
+            },
+            {
+                Op:    "replace",
+                Path:  "environment",
+                Value: "production",
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Update Key Aliases
+
+Manage key aliases:
+
+```go
+key, err := kmsClient.UpdateKeyAliases(context.Background(),
+    services.UpdateKeyAliasesInput{
+        ID: "key-001",
+        Patches: []models.MetadataPatch{
+            {
+                Op:    "add",
+                Path:  "primary-signing-key",
+                Value: "",
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Delete Key
+
+Delete a key:
+
+```go
+err := kmsClient.DeleteKeyByID(context.Background(), services.GetKeyInput{
+    Identifier: "key-001",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+## Cryptographic Operations
+
+### Sign Message
+
+Sign data using a key:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+
+message := "data to sign"
+
+signature, err := kmsClient.SignMessage(context.Background(), services.SignMessageInput{
+    Identifier:  "key-001",
+    Algorithm:   "SHA256WithRSA",
+    Message:     message,
+    MessageType: models.Raw,
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Signature: %s", signature.Signature)
+```
+
+### Sign Pre-hashed Message
+
+Sign a pre-hashed message:
+
+```go
+import (
+    "crypto/sha256"
+    "encoding/base64"
+)
+
+data := []byte("important data")
+hash := sha256.Sum256(data)
+hashB64 := base64.StdEncoding.EncodeToString(hash[:])
+
+signature, err := kmsClient.SignMessage(context.Background(), services.SignMessageInput{
+    Identifier:  "key-001",
+    Algorithm:   "SHA256WithRSA",
+    Message:     hashB64,
+    MessageType: models.Digest,
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Sign with ECDSA
+
+Sign using an ECDSA key:
+
+```go
+signature, err := kmsClient.SignMessage(context.Background(), services.SignMessageInput{
+    Identifier:  "ecdsa-key-001",
+    Algorithm:   "SHA256WithECDSA",
+    Message:     "data to sign",
+    MessageType: models.Raw,
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Verify Signature
+
+Verify a signature:
+
+```go
+message := "data to sign"
+
+validation, err := kmsClient.VerifySignature(context.Background(), services.VerifySignInput{
+    Identifier:  "key-001",
+    Algorithm:   "SHA256WithRSA",
+    Message:     message,
+    Signature:   signature.Signature,
+    MessageType: models.Raw,
+})
+if err != nil {
+    // Handle error
+}
+
+if validation.Valid {
+    log.Println("Signature is valid")
+} else {
+    log.Println("Signature is invalid")
+}
+```
+
+### Verify Pre-hashed Signature
+
+Verify a signature on pre-hashed data:
+
+```go
+import (
+    "crypto/sha256"
+    "encoding/base64"
+)
+
+data := []byte("important data")
+hash := sha256.Sum256(data)
+hashB64 := base64.StdEncoding.EncodeToString(hash[:])
+
+validation, err := kmsClient.VerifySignature(context.Background(), services.VerifySignInput{
+    Identifier:  "key-001",
+    Algorithm:   "SHA256WithRSA",
+    Message:     hashB64,
+    Signature:   signature.Signature,
+    MessageType: models.Digest,
+})
+if err != nil {
+    // Handle error
+}
+```
+
+## Key Statistics
+
+### Get Key Statistics
+
+Retrieve statistics about keys:
+
+```go
+stats, err := kmsClient.GetKeyStats(context.Background(), services.GetKeyStatsInput{
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "algorithm",
+                FilterOperation: resources.StringEqual,
+                Value:           "RSA",
+            },
+        },
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Total keys: %d", stats.TotalKeys)
+log.Printf("RSA keys: %d", stats.RSAKeys)
+log.Printf("ECDSA keys: %d", stats.ECDSAKeys)
+```
+
+## Crypto Engine Providers
+
+### Get Available Engines
+
+Retrieve available cryptographic engine providers:
+
+```go
+engines, err := kmsClient.GetCryptoEngineProvider(context.Background())
+if err != nil {
+    // Handle error
+}
+
+for _, engine := range engines {
+    log.Printf("Engine ID: %s, Type: %s", engine.ID, engine.Type)
+}
+```
+
+## Advanced Filtering
+
+### Filter Keys by Algorithm
+
+Find keys by algorithm:
+
+```go
+var rsaKeys []*models.Key
+
+_, err := kmsClient.GetKeys(context.Background(), services.GetKeysInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "algorithm",
+                FilterOperation: resources.StringEqual,
+                Value:           "RSA",
+            },
+        },
+    },
+    ApplyFunc: func(key models.Key) {
+        rsaKeys = append(rsaKeys, &key)
+    },
+})
+```
+
+### Filter Keys by Size
+
+Find keys by key size:
+
+```go
+var strongKeys []*models.Key
+
+_, err := kmsClient.GetKeys(context.Background(), services.GetKeysInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "size",
+                FilterOperation: resources.NumberGreaterOrEqualThan,
+                Value:           "4096",
+            },
+        },
+    },
+    ApplyFunc: func(key models.Key) {
+        strongKeys = append(strongKeys, &key)
+    },
+})
+```
+
+### Filter Keys by Tags
+
+Find keys with specific tags:
+
+```go
+var productionKeys []*models.Key
+
+_, err := kmsClient.GetKeys(context.Background(), services.GetKeysInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "tags",
+                FilterOperation: resources.StringArrayContains,
+                Value:           "production",
+            },
+        },
+    },
+    ApplyFunc: func(key models.Key) {
+        productionKeys = append(productionKeys, &key)
+    },
+})
+```
+
+### Filter Keys by Metadata
+
+Find keys using metadata JSON path:
+
+```go
+var criticalKeys []*models.Key
+
+_, err := kmsClient.GetKeys(context.Background(), services.GetKeysInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "metadata",
+                FilterOperation: resources.JsonPathExpression,
+                Value:           "$.purpose[?(@=='critical-signing')]",
+            },
+        },
+    },
+    ApplyFunc: func(key models.Key) {
+        criticalKeys = append(criticalKeys, &key)
+    },
+})
+```
+
+## Supported Algorithms
+
+### RSA Algorithms
+
+- `SHA256WithRSA` - RSA signature with SHA-256
+- `SHA384WithRSA` - RSA signature with SHA-384
+- `SHA512WithRSA` - RSA signature with SHA-512
+
+### ECDSA Algorithms
+
+- `SHA256WithECDSA` - ECDSA signature with SHA-256
+- `SHA384WithECDSA` - ECDSA signature with SHA-384
+- `SHA512WithECDSA` - ECDSA signature with SHA-512
+
+### Key Sizes
+
+**RSA:** 2048, 3072, 4096 bits
+
+**ECDSA:** 256 (P-256), 384 (P-384), 521 (P-521) bits
+
+## Complete Example
+
+Here's a complete example demonstrating key lifecycle and signing:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/config"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+    "github.com/sirupsen/logrus"
+)
+
+func main() {
+    logger := logrus.NewEntry(logrus.New())
+    
+    // Build HTTP client
+    httpClient, err := sdk.BuildHTTPClient(config.HTTPClient{
+        Protocol: "https",
+        Hostname: "kms.lamassu.example.com",
+        Port:     443,
+        AuthMode: config.NoAuth,
+    }, logger)
+    if err != nil {
+        log.Fatalf("Failed to build HTTP client: %v", err)
+    }
+    
+    // Initialize KMS client
+    kmsClient := sdk.NewHttpKMSClient(httpClient, "https://kms.lamassu.example.com")
+    
+    ctx := context.Background()
+    
+    // Create a new key
+    key, err := kmsClient.CreateKey(ctx, services.CreateKeyInput{
+        Algorithm: "RSA",
+        Size:      4096,
+        EngineID:  "default",
+        Name:      "my-signing-key",
+        Tags:      []string{"signing"},
+    })
+    if err != nil {
+        log.Fatalf("Failed to create key: %v", err)
+    }
+    
+    log.Printf("Created key: %s", key.ID)
+    
+    // Sign a message
+    message := "important message to sign"
+    signature, err := kmsClient.SignMessage(ctx, services.SignMessageInput{
+        Identifier:  key.ID,
+        Algorithm:   "SHA256WithRSA",
+        Message:     message,
+        MessageType: models.Raw,
+    })
+    if err != nil {
+        log.Fatalf("Failed to sign message: %v", err)
+    }
+    
+    log.Printf("Signature: %s", signature.Signature)
+    
+    // Verify the signature
+    validation, err := kmsClient.VerifySignature(ctx, services.VerifySignInput{
+        Identifier:  key.ID,
+        Algorithm:   "SHA256WithRSA",
+        Message:     message,
+        Signature:   signature.Signature,
+        MessageType: models.Raw,
+    })
+    if err != nil {
+        log.Fatalf("Failed to verify signature: %v", err)
+    }
+    
+    if validation.Valid {
+        log.Println("Signature verified successfully!")
+    } else {
+        log.Println("Signature verification failed!")
+    }
+}
+```
+
+## Error Handling
+
+Handle common KMS errors:
+
+```go
+import (
+    "errors"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/errs"
+)
+
+key, err := kmsClient.GetKey(context.Background(), services.GetKeyInput{
+    Identifier: "unknown-key",
+})
+if err != nil {
+    // KMS client errors are typically wrapped HTTP errors
+    log.Printf("Error getting key: %v", err)
+}
+```

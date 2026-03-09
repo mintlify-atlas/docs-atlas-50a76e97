@@ -1,0 +1,616 @@
+---
+title: CA Client
+description: Certificate Authority management using the Go SDK
+---
+
+The CA Client provides comprehensive management of Certificate Authorities (CAs), certificates, issuance profiles, and cryptographic operations.
+
+## Initialization
+
+Create a CA client instance:
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+)
+
+caClient := sdk.NewHttpCAClient(httpClient, "https://ca.lamassu.example.com")
+```
+
+## Certificate Authority Operations
+
+### Create a CA
+
+Create a new Certificate Authority:
+
+```go
+import (
+    "context"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+)
+
+ca, err := caClient.CreateCA(context.Background(), services.CreateCAInput{
+    ID: "my-intermediate-ca",
+    Subject: models.Subject{
+        CommonName:   "My Intermediate CA",
+        Organization: "Example Corp",
+        Country:      "US",
+    },
+    KeyMetadata: models.KeyMetadata{
+        Type: models.KeyType("RSA"),
+        Bits: 4096,
+    },
+    CAExpiration: models.Expiration{
+        Type:     models.Duration,
+        Duration: "87600h", // 10 years
+    },
+    ParentID:  "root-ca",
+    EngineID:  "default",
+    ProfileID: "default-ca-profile",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Import an Existing CA
+
+Import a CA with its certificate and private key:
+
+```go
+import (
+    "crypto/x509"
+    "crypto/rsa"
+)
+
+var caCert *x509.Certificate
+var caKey *rsa.PrivateKey
+// ... load certificate and key ...
+
+ca, err := caClient.ImportCA(context.Background(), services.ImportCAInput{
+    ID:            "imported-ca",
+    ProfileID:     "default-ca-profile",
+    CACertificate: caCert,
+    CAChain:       []*x509.Certificate{parentCert},
+    Key:           caKey,
+    EngineID:      "default",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Get CA by ID
+
+Retrieve a specific CA:
+
+```go
+ca, err := caClient.GetCAByID(context.Background(), services.GetCAByIDInput{
+    CAID: "my-ca",
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("CA: %s, Status: %s", ca.Subject.CommonName, ca.Status)
+```
+
+### List All CAs
+
+Retrieve all CAs with pagination:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/resources"
+
+var cas []*models.CACertificate
+
+_, err := caClient.GetCAs(context.Background(), services.GetCAsInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        PageSize: 100,
+        Sort: resources.SortOptions{
+            SortField: "created_at",
+            SortMode:  resources.SortModeDesc,
+        },
+    },
+    ApplyFunc: func(ca models.CACertificate) {
+        cas = append(cas, &ca)
+    },
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Get CAs by Common Name
+
+Find CAs by their common name:
+
+```go
+var matchingCAs []*models.CACertificate
+
+_, err := caClient.GetCAsByCommonName(context.Background(), services.GetCAsByCommonNameInput{
+    CommonName:    "My CA",
+    ExhaustiveRun: true,
+    ApplyFunc: func(ca models.CACertificate) {
+        matchingCAs = append(matchingCAs, &ca)
+    },
+})
+```
+
+### Update CA Status
+
+Revoke or update CA status:
+
+```go
+ca, err := caClient.UpdateCAStatus(context.Background(), services.UpdateCAStatusInput{
+    CAID:             "my-ca",
+    Status:           models.StatusRevoked,
+    RevocationReason: models.RevocationReasonSuperseded,
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Update CA Metadata
+
+Update CA metadata using JSON patches:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+
+ca, err := caClient.UpdateCAMetadata(context.Background(), services.UpdateCAMetadataInput{
+    CAID: "my-ca",
+    Patches: []models.MetadataPatch{
+        {
+            Op:    "add",
+            Path:  "environment",
+            Value: "production",
+        },
+    },
+})
+```
+
+### Reissue a CA
+
+Reissue a CA certificate:
+
+```go
+ca, err := caClient.ReissueCA(context.Background(), services.ReissueCAInput{
+    CAID: "my-ca",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Delete a CA
+
+Delete a CA with optional cascade:
+
+```go
+err := caClient.DeleteCA(context.Background(), services.DeleteCAInput{
+    CAID:          "my-ca",
+    CascadeDelete: false,
+})
+if err != nil {
+    // Handle error
+}
+```
+
+## Certificate Operations
+
+### Sign Certificate Request
+
+Sign a CSR to issue a certificate:
+
+```go
+import "crypto/x509"
+
+var csr *x509.CertificateRequest
+// ... create CSR ...
+
+cert, err := caClient.SignCertificate(context.Background(), services.SignCertificateInput{
+    CAID:        "my-ca",
+    CertRequest: csr,
+    ProfileID:   "device-profile",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Import a Certificate
+
+Import an existing certificate:
+
+```go
+var cert *x509.Certificate
+// ... load certificate ...
+
+importedCert, err := caClient.ImportCertificate(context.Background(), services.ImportCertificateInput{
+    Certificate: cert,
+    Metadata: map[string]interface{}{
+        "source": "external-ca",
+    },
+})
+```
+
+### Get Certificate by Serial Number
+
+Retrieve a certificate:
+
+```go
+cert, err := caClient.GetCertificateBySerialNumber(context.Background(),
+    services.GetCertificatesBySerialNumberInput{
+        SerialNumber: "1a:2b:3c:4d:5e:6f",
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### List Certificates
+
+Get all certificates with filtering:
+
+```go
+var certs []*models.Certificate
+
+_, err := caClient.GetCertificates(context.Background(), services.GetCertificatesInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "status",
+                FilterOperation: resources.StringEqual,
+                Value:           string(models.StatusActive),
+            },
+        },
+    },
+    ApplyFunc: func(cert models.Certificate) {
+        certs = append(certs, &cert)
+    },
+})
+```
+
+### Get Certificates by CA
+
+Retrieve all certificates issued by a specific CA:
+
+```go
+var certs []*models.Certificate
+
+_, err := caClient.GetCertificatesByCA(context.Background(), services.GetCertificatesByCAInput{
+    CAID:          "my-ca",
+    ExhaustiveRun: true,
+    ApplyFunc: func(cert models.Certificate) {
+        certs = append(certs, &cert)
+    },
+})
+```
+
+### Get Certificates by Expiration Date
+
+Find certificates expiring in a date range:
+
+```go
+import "time"
+
+var expiringCerts []*models.Certificate
+
+now := time.Now()
+oneMonthLater := now.AddDate(0, 1, 0)
+
+_, err := caClient.GetCertificatesByExpirationDate(context.Background(),
+    services.GetCertificatesByExpirationDateInput{
+        ExpiresAfter:  now,
+        ExpiresBefore: oneMonthLater,
+        ExhaustiveRun: true,
+        ApplyFunc: func(cert models.Certificate) {
+            expiringCerts = append(expiringCerts, &cert)
+        },
+    },
+)
+```
+
+### Get Certificates by Status
+
+Retrieve certificates with a specific status:
+
+```go
+var revokedCerts []*models.Certificate
+
+_, err := caClient.GetCertificatesByStatus(context.Background(),
+    services.GetCertificatesByStatusInput{
+        Status:        models.StatusRevoked,
+        ExhaustiveRun: true,
+        ApplyFunc: func(cert models.Certificate) {
+            revokedCerts = append(revokedCerts, &cert)
+        },
+    },
+)
+```
+
+### Update Certificate Status
+
+Revoke a certificate:
+
+```go
+cert, err := caClient.UpdateCertificateStatus(context.Background(),
+    services.UpdateCertificateStatusInput{
+        SerialNumber:     "1a:2b:3c:4d:5e:6f",
+        NewStatus:        models.StatusRevoked,
+        RevocationReason: models.RevocationReasonKeyCompromise,
+    },
+)
+```
+
+### Update Certificate Metadata
+
+Update certificate metadata:
+
+```go
+cert, err := caClient.UpdateCertificateMetadata(context.Background(),
+    services.UpdateCertificateMetadataInput{
+        SerialNumber: "1a:2b:3c:4d:5e:6f",
+        Patches: []models.MetadataPatch{
+            {
+                Op:    "add",
+                Path:  "device_id",
+                Value: "device-123",
+            },
+        },
+    },
+)
+```
+
+### Delete Certificate
+
+Delete a certificate:
+
+```go
+err := caClient.DeleteCertificate(context.Background(), services.DeleteCertificateInput{
+    SerialNumber: "1a:2b:3c:4d:5e:6f",
+})
+```
+
+## Issuance Profile Operations
+
+### Create Issuance Profile
+
+Create a certificate issuance profile:
+
+```go
+import "crypto/x509"
+
+profile, err := caClient.CreateIssuanceProfile(context.Background(),
+    services.CreateIssuanceProfileInput{
+        Profile: models.IssuanceProfile{
+            Name:        "Device Profile",
+            Description: "Profile for IoT devices",
+            Validity: models.Expiration{
+                Type:     models.Duration,
+                Duration: "8760h", // 1 year
+            },
+            SignAsCA:      false,
+            HonorKeyUsage: false,
+            KeyUsage: []string{
+                "digitalSignature",
+                "keyEncipherment",
+            },
+            HonorExtendedKeyUsages: false,
+            ExtendedKeyUsages: []string{
+                "clientAuth",
+            },
+            HonorSubject: true,
+            Subject: models.Subject{
+                Organization: "Example Corp",
+            },
+            CryptoEnforcement: models.CryptoEnforcement{
+                Enabled:              true,
+                AllowRSAKeys:         true,
+                AllowECDSAKeys:       true,
+                AllowedRSAKeySizes:   []int{2048, 4096},
+                AllowedECDSAKeySizes: []int{256, 384},
+            },
+        },
+    },
+)
+```
+
+### Get Issuance Profile
+
+Retrieve a profile by ID:
+
+```go
+profile, err := caClient.GetIssuanceProfileByID(context.Background(),
+    services.GetIssuanceProfileByIDInput{
+        ProfileID: "device-profile",
+    },
+)
+```
+
+### List Issuance Profiles
+
+Get all issuance profiles:
+
+```go
+var profiles []*models.IssuanceProfile
+
+_, err := caClient.GetIssuanceProfiles(context.Background(),
+    services.GetIssuanceProfilesInput{
+        ExhaustiveRun: true,
+        ApplyFunc: func(profile models.IssuanceProfile) {
+            profiles = append(profiles, &profile)
+        },
+    },
+)
+```
+
+### Update Issuance Profile
+
+Update an existing profile:
+
+```go
+profile.Validity.Duration = "17520h" // 2 years
+
+updatedProfile, err := caClient.UpdateIssuanceProfile(context.Background(),
+    services.UpdateIssuanceProfileInput{
+        Profile: *profile,
+    },
+)
+```
+
+### Delete Issuance Profile
+
+Delete a profile:
+
+```go
+err := caClient.DeleteIssuanceProfile(context.Background(),
+    services.DeleteIssuanceProfileInput{
+        ProfileID: "old-profile",
+    },
+)
+```
+
+## Cryptographic Operations
+
+### Sign Message
+
+Sign a message using the CA's private key:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+
+message := []byte("data to sign")
+
+signature, err := caClient.SignatureSign(context.Background(), services.SignatureSignInput{
+    CAID:             "my-ca",
+    Message:          message,
+    MessageType:      models.Raw,
+    SigningAlgorithm: "SHA256WithRSA",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Verify Signature
+
+Verify a signature using the CA's public key:
+
+```go
+valid, err := caClient.SignatureVerify(context.Background(), services.SignatureVerifyInput{
+    CAID:             "my-ca",
+    Message:          message,
+    Signature:        signature,
+    MessageType:      models.Raw,
+    SigningAlgorithm: "SHA256WithRSA",
+})
+if err != nil {
+    // Handle error
+}
+
+if valid {
+    log.Println("Signature is valid")
+}
+```
+
+## Statistics
+
+### Get CA Statistics
+
+Get statistics across all CAs:
+
+```go
+stats, err := caClient.GetStats(context.Background(), services.GetStatsInput{
+    CAQueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "status",
+                FilterOperation: resources.StringEqual,
+                Value:           string(models.StatusActive),
+            },
+        },
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Total CAs: %d", stats.TotalCAs)
+log.Printf("Total Certificates: %d", stats.TotalCertificates)
+```
+
+### Get Statistics by CA
+
+Get certificate statistics for a specific CA:
+
+```go
+certStats, err := caClient.GetStatsByCAID(context.Background(), services.GetStatsByCAIDInput{
+    CAID: "my-ca",
+})
+if err != nil {
+    // Handle error
+}
+
+for status, count := range certStats {
+    log.Printf("Status %s: %d certificates", status, count)
+}
+```
+
+## Crypto Engine Providers
+
+### Get Available Engines
+
+Retrieve available cryptographic engine providers:
+
+```go
+engines, err := caClient.GetCryptoEngineProvider(context.Background())
+if err != nil {
+    // Handle error
+}
+
+for _, engine := range engines {
+    log.Printf("Engine: %s, Type: %s", engine.ID, engine.Type)
+}
+```
+
+## Error Handling
+
+The CA client maps HTTP errors to specific error types:
+
+```go
+import (
+    "errors"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/errs"
+)
+
+ca, err := caClient.GetCAByID(context.Background(), services.GetCAByIDInput{
+    CAID: "unknown-ca",
+})
+if err != nil {
+    if errors.Is(err, errs.ErrCANotFound) {
+        log.Println("CA not found")
+    } else if errors.Is(err, errs.ErrCAAlreadyExists) {
+        log.Println("CA already exists")
+    } else if errors.Is(err, errs.ErrCAAlreadyRevoked) {
+        log.Println("CA is already revoked")
+    } else {
+        log.Printf("Unexpected error: %v", err)
+    }
+}
+```
+
+Common errors:
+- `errs.ErrCANotFound` - CA not found (404)
+- `errs.ErrCAAlreadyExists` - CA already exists (409)
+- `errs.ErrCAAlreadyRevoked` - CA already revoked (400)
+- `errs.ErrCAExpired` - CA expired (400)
+- `errs.ErrCertificateNotFound` - Certificate not found (404)
+- `errs.ErrIssuanceProfileNotFound` - Issuance profile not found (404)
+- `errs.ErrValidateBadRequest` - Validation error (400)

@@ -1,0 +1,431 @@
+---
+title: DMS Manager Client
+description: Device Management Service operations using the Go SDK
+---
+
+The DMS Manager Client provides operations for managing Device Management Service (DMS) instances and binding device identities.
+
+## Initialization
+
+Create a DMS Manager client instance:
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+)
+
+dmsClient := sdk.NewHttpDMSManagerClient(httpClient, "https://dms.lamassu.example.com")
+```
+
+## DMS Operations
+
+### Create DMS
+
+Create a new DMS instance:
+
+```go
+import (
+    "context"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+)
+
+dms, err := dmsClient.CreateDMS(context.Background(), services.CreateDMSInput{
+    ID:   "manufacturing-dms",
+    Name: "Manufacturing DMS",
+    Metadata: map[string]interface{}{
+        "location": "Factory Floor 1",
+        "owner":    "Manufacturing Team",
+    },
+    Settings: models.DMSSettings{
+        EnrollmentSettings: models.EnrollmentSettings{
+            EnrollmentProtocol:        models.EST,
+            EnrollmentOptionsESTRFC7030: models.EnrollmentOptionsESTRFC7030{
+                AuthMode: models.ESTAuthMode("certificate"),
+            },
+        },
+        ReEnrollmentSettings: models.ReEnrollmentSettings{
+            AdditionalValidationCAs:          []string{"trusted-ca-1"},
+            PreventiveReEnrollmentDelta:      30,
+            CriticalReEnrollmentDelta:        7,
+            ReEnrollmentOnExpiredCertificate: false,
+        },
+        CADistributionSettings: models.CADistributionSettings{
+            IncludeLamassuSystemCA: true,
+            IncludeEnrollmentCA:    true,
+            ManagedCAs:             []string{"device-ca"},
+        },
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Created DMS: %s", dms.Name)
+```
+
+### Get DMS by ID
+
+Retrieve a specific DMS:
+
+```go
+dms, err := dmsClient.GetDMSByID(context.Background(), services.GetDMSByIDInput{
+    ID: "manufacturing-dms",
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("DMS: %s, ID: %s", dms.Name, dms.ID)
+```
+
+### List All DMS Instances
+
+Retrieve all DMS instances:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/resources"
+
+var dmsList []*models.DMS
+
+_, err := dmsClient.GetAll(context.Background(), services.GetAllInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        PageSize: 100,
+        Sort: resources.SortOptions{
+            SortField: "created_at",
+            SortMode:  resources.SortModeDesc,
+        },
+    },
+    ApplyFunc: func(dms models.DMS) {
+        dmsList = append(dmsList, &dms)
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Found %d DMS instances", len(dmsList))
+```
+
+### Update DMS
+
+Update an existing DMS:
+
+```go
+dms.Name = "Updated Manufacturing DMS"
+dms.Settings.ReEnrollmentSettings.PreventiveReEnrollmentDelta = 45
+
+updatedDMS, err := dmsClient.UpdateDMS(context.Background(), services.UpdateDMSInput{
+    DMS: *dms,
+})
+if err != nil {
+    // Handle error
+}
+```
+
+### Update DMS Metadata
+
+Update DMS metadata using JSON patches:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+
+dms, err := dmsClient.UpdateDMSMetadata(context.Background(),
+    services.UpdateDMSMetadataInput{
+        ID: "manufacturing-dms",
+        Patches: []models.MetadataPatch{
+            {
+                Op:    "add",
+                Path:  "environment",
+                Value: "production",
+            },
+            {
+                Op:    "replace",
+                Path:  "owner",
+                Value: "IoT Operations Team",
+            },
+        },
+    },
+)
+if err != nil {
+    // Handle error
+}
+```
+
+### Delete DMS
+
+Delete a DMS instance:
+
+```go
+err := dmsClient.DeleteDMS(context.Background(), services.DeleteDMSInput{
+    ID: "old-dms",
+})
+if err != nil {
+    // Handle error
+}
+```
+
+## DMS Statistics
+
+### Get DMS Statistics
+
+Retrieve statistics for DMS instances:
+
+```go
+stats, err := dmsClient.GetDMSStats(context.Background(), services.GetDMSStatsInput{
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "name",
+                FilterOperation: resources.StringContains,
+                Value:           "Manufacturing",
+            },
+        },
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Total DMS instances: %d", stats.TotalDMSs)
+```
+
+## Device Identity Binding
+
+### Bind Identity to Device
+
+Bind a certificate to a device:
+
+```go
+import "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+
+output, err := dmsClient.BindIdentityToDevice(context.Background(),
+    services.BindIdentityToDeviceInput{
+        BindMode:                models.BindModeReplace,
+        DeviceID:                "device-001",
+        CertificateSerialNumber: "1a:2b:3c:4d:5e:6f",
+    },
+)
+if err != nil {
+    // Handle error
+}
+
+log.Printf("Bound certificate to device: %s", output.DeviceID)
+```
+
+### Bind Modes
+
+The SDK supports different bind modes:
+
+```go
+// Replace existing identity slot
+services.BindIdentityToDeviceInput{
+    BindMode:                models.BindModeReplace,
+    DeviceID:                "device-001",
+    CertificateSerialNumber: "1a:2b:3c:4d:5e:6f",
+}
+
+// Keep existing certificate if valid
+services.BindIdentityToDeviceInput{
+    BindMode:                models.BindModeKeepValid,
+    DeviceID:                "device-001",
+    CertificateSerialNumber: "1a:2b:3c:4d:5e:6f",
+}
+```
+
+## EST Protocol Operations
+
+<Info>
+  The EST (Enrollment over Secure Transport) operations (`CACerts`, `Enroll`, `Reenroll`, `ServerKeyGen`) are not supported via the HTTP DMS Manager client. Use the EST client directly for these operations.
+</Info>
+
+```go
+// These operations return "not supported" errors:
+// - CACerts
+// - Enroll
+// - Reenroll
+// - ServerKeyGen
+
+// Use the dedicated EST client instead
+```
+
+## DMS Configuration Examples
+
+### EST-based DMS with Certificate Auth
+
+Create a DMS using EST protocol with certificate authentication:
+
+```go
+dms, err := dmsClient.CreateDMS(context.Background(), services.CreateDMSInput{
+    ID:   "est-cert-dms",
+    Name: "EST Certificate Auth DMS",
+    Settings: models.DMSSettings{
+        EnrollmentSettings: models.EnrollmentSettings{
+            EnrollmentProtocol: models.EST,
+            EnrollmentOptionsESTRFC7030: models.EnrollmentOptionsESTRFC7030{
+                AuthMode: models.ESTAuthMode("certificate"),
+            },
+        },
+        ReEnrollmentSettings: models.ReEnrollmentSettings{
+            AdditionalValidationCAs:          []string{},
+            PreventiveReEnrollmentDelta:      30,
+            CriticalReEnrollmentDelta:        7,
+            ReEnrollmentOnExpiredCertificate: false,
+        },
+        CADistributionSettings: models.CADistributionSettings{
+            IncludeLamassuSystemCA: true,
+            IncludeEnrollmentCA:    true,
+            ManagedCAs:             []string{},
+        },
+    },
+})
+```
+
+### DMS with Re-enrollment Settings
+
+Configure a DMS with specific re-enrollment policies:
+
+```go
+dms, err := dmsClient.CreateDMS(context.Background(), services.CreateDMSInput{
+    ID:   "auto-reenroll-dms",
+    Name: "Auto Re-enrollment DMS",
+    Settings: models.DMSSettings{
+        EnrollmentSettings: models.EnrollmentSettings{
+            EnrollmentProtocol: models.EST,
+            EnrollmentOptionsESTRFC7030: models.EnrollmentOptionsESTRFC7030{
+                AuthMode: models.ESTAuthMode("certificate"),
+            },
+        },
+        ReEnrollmentSettings: models.ReEnrollmentSettings{
+            // Trigger re-enrollment 30 days before expiration
+            PreventiveReEnrollmentDelta: 30,
+            // Critical warning 7 days before expiration
+            CriticalReEnrollmentDelta: 7,
+            // Prevent re-enrollment after certificate expires
+            ReEnrollmentOnExpiredCertificate: false,
+            // Additional CAs to validate during re-enrollment
+            AdditionalValidationCAs: []string{"backup-ca", "legacy-ca"},
+        },
+        CADistributionSettings: models.CADistributionSettings{
+            IncludeLamassuSystemCA: true,
+            IncludeEnrollmentCA:    true,
+            ManagedCAs:             []string{"device-ca", "iot-ca"},
+        },
+    },
+})
+```
+
+### DMS with Custom CA Distribution
+
+Configure which CAs are distributed to devices:
+
+```go
+dms, err := dmsClient.CreateDMS(context.Background(), services.CreateDMSInput{
+    ID:   "custom-ca-dms",
+    Name: "Custom CA Distribution DMS",
+    Settings: models.DMSSettings{
+        EnrollmentSettings: models.EnrollmentSettings{
+            EnrollmentProtocol: models.EST,
+            EnrollmentOptionsESTRFC7030: models.EnrollmentOptionsESTRFC7030{
+                AuthMode: models.ESTAuthMode("certificate"),
+            },
+        },
+        ReEnrollmentSettings: models.ReEnrollmentSettings{
+            PreventiveReEnrollmentDelta:      30,
+            CriticalReEnrollmentDelta:        7,
+            ReEnrollmentOnExpiredCertificate: false,
+        },
+        CADistributionSettings: models.CADistributionSettings{
+            // Include the Lamassu system CA in CA bundle
+            IncludeLamassuSystemCA: true,
+            // Include the enrollment CA in CA bundle
+            IncludeEnrollmentCA: true,
+            // Additional specific CAs to distribute
+            ManagedCAs: []string{
+                "production-device-ca",
+                "iot-gateway-ca",
+                "manufacturing-ca",
+            },
+        },
+    },
+})
+```
+
+## Error Handling
+
+The DMS Manager client maps HTTP errors to specific error types:
+
+```go
+import (
+    "errors"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/errs"
+)
+
+dms, err := dmsClient.GetDMSByID(context.Background(), services.GetDMSByIDInput{
+    ID: "unknown-dms",
+})
+if err != nil {
+    if errors.Is(err, errs.ErrDMSNotFound) {
+        log.Println("DMS not found")
+    } else if errors.Is(err, errs.ErrValidateBadRequest) {
+        log.Println("Validation error")
+    } else {
+        log.Printf("Unexpected error: %v", err)
+    }
+}
+```
+
+Common errors:
+- `errs.ErrDMSNotFound` - DMS not found (404)
+- `errs.ErrValidateBadRequest` - Validation error (400)
+
+## Advanced Filtering
+
+### Filter DMS by Name
+
+Find DMS instances by name pattern:
+
+```go
+var manufacturingDMS []*models.DMS
+
+_, err := dmsClient.GetAll(context.Background(), services.GetAllInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "name",
+                FilterOperation: resources.StringContains,
+                Value:           "Manufacturing",
+            },
+        },
+    },
+    ApplyFunc: func(dms models.DMS) {
+        manufacturingDMS = append(manufacturingDMS, &dms)
+    },
+})
+```
+
+### Filter by Metadata
+
+Find DMS instances using metadata:
+
+```go
+var productionDMS []*models.DMS
+
+_, err := dmsClient.GetAll(context.Background(), services.GetAllInput{
+    ExhaustiveRun: true,
+    QueryParameters: &resources.QueryParameters{
+        Filters: []resources.FilterOption{
+            {
+                Field:           "metadata",
+                FilterOperation: resources.JsonPathExpression,
+                Value:           "$.environment[?(@=='production')]",
+            },
+        },
+    },
+    ApplyFunc: func(dms models.DMS) {
+        productionDMS = append(productionDMS, &dms)
+    },
+})
+```

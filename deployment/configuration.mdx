@@ -1,0 +1,518 @@
+---
+title: Configuration Reference
+description: Environment variables, storage backends, and crypto engine configuration for Lamassu IoT
+icon: gear
+---
+
+Lamassu services are configured using environment variables that map to structured configuration objects. All configuration is loaded at startup using the [Viper](https://github.com/spf13/viper) library.
+
+## Configuration Loading
+
+Configuration is loaded from environment variables using double underscore (`__`) as the nesting delimiter:
+
+```bash
+# Maps to config.Server.Port
+SERVER__PORT=8080
+
+# Maps to config.Storage.Config.Hostname
+STORAGE__CONFIG__HOSTNAME=postgres.example.com
+```
+
+<Note>
+  Environment variables are case-insensitive and can use double underscores to represent nested configuration structures.
+</Note>
+
+## Common Configuration
+
+### Logging
+
+Control log output levels across all services:
+
+```bash
+# Log level: trace, debug, info, warn, error
+LOGS__LEVEL=info
+```
+
+**Available levels:**
+- `trace` - Most verbose, includes all debug information
+- `debug` - Detailed debugging information
+- `info` - General informational messages (recommended for production)
+- `warn` - Warning messages for potentially harmful situations
+- `error` - Error messages for critical issues
+
+### HTTP Server
+
+Configure the HTTP server for each service:
+
+```bash
+# Server configuration
+SERVER__LOG_LEVEL=info
+SERVER__LISTEN_ADDRESS=0.0.0.0
+SERVER__PORT=8080
+SERVER__PROTOCOL=https
+SERVER__CERT_FILE=/certs/server.crt
+SERVER__KEY_FILE=/certs/server.key
+
+# Health check logging (set to false to reduce log noise)
+SERVER__HEALTH_CHECK=false
+```
+
+#### Mutual TLS Authentication
+
+Enable mTLS for service-to-service authentication:
+
+```bash
+SERVER__AUTHENTICATION__MUTUAL_TLS__ENABLED=true
+SERVER__AUTHENTICATION__MUTUAL_TLS__VALIDATION_MODE=strict
+SERVER__AUTHENTICATION__MUTUAL_TLS__CA_CERT_FILE=/certs/ca.crt
+```
+
+**Validation modes:**
+- `strict` - Require and validate client certificates
+- `request` - Request but don't require client certificates  
+- `any` - Accept any client certificate
+
+### HTTP Client (Inter-Service Communication)
+
+Configure how services communicate with each other:
+
+```bash
+# KMS Client (used by CA, Device Manager, etc.)
+KMS_CLIENT__LOG_LEVEL=info
+KMS_CLIENT__PROTOCOL=https
+KMS_CLIENT__HOSTNAME=lamassu-kms
+KMS_CLIENT__PORT=8080
+KMS_CLIENT__BASE_PATH=/
+
+# Authentication method: jwt, apikey, mtls, noauth
+KMS_CLIENT__AUTH_MODE=noauth
+```
+
+#### JWT Authentication
+
+```bash
+KMS_CLIENT__AUTH_MODE=jwt
+KMS_CLIENT__JWT_OPTIONS__OIDC_CLIENT_ID=lamassu-ca
+KMS_CLIENT__JWT_OPTIONS__OIDC_CLIENT_SECRET=your-client-secret
+KMS_CLIENT__JWT_OPTIONS__OIDC_WELL_KNOWN=https://auth.example.com/.well-known/openid-configuration
+```
+
+#### Mutual TLS Authentication
+
+```bash
+KMS_CLIENT__AUTH_MODE=mtls
+KMS_CLIENT__MTLS_OPTIONS__CERT_FILE=/certs/client.crt
+KMS_CLIENT__MTLS_OPTIONS__KEY_FILE=/certs/client.key
+```
+
+#### API Key Authentication
+
+```bash
+KMS_CLIENT__AUTH_MODE=apikey
+KMS_CLIENT__APIKEY_OPTIONS__KEY=your-api-key
+KMS_CLIENT__APIKEY_OPTIONS__HEADER=X-API-Key
+```
+
+## Storage Configuration
+
+### PostgreSQL (Recommended for Production)
+
+```bash
+STORAGE__LOG_LEVEL=warn
+STORAGE__PROVIDER=postgres
+STORAGE__CONFIG__HOSTNAME=postgres.lamassu-system.svc.cluster.local
+STORAGE__CONFIG__PORT=5432
+STORAGE__CONFIG__USERNAME=lamassu
+STORAGE__CONFIG__PASSWORD=your-secure-password
+```
+
+**Database naming:** Each service creates its own database:
+- `lamassu_ca` - Certificate Authority data
+- `lamassu_devicemanager` - Device registry
+- `lamassu_dmsmanager` - DMS configurations
+- `lamassu_kms` - Key metadata
+- `lamassu_alerts` - Alert definitions
+- `lamassu_va` - Validation Authority data
+
+### SQLite (Development Only)
+
+```bash
+STORAGE__PROVIDER=sqlite
+STORAGE__CONFIG__PATH=file::memory:?cache=shared
+```
+
+<Warning>
+  SQLite is ephemeral and should only be used for development. Data is lost when the process stops.
+</Warning>
+
+### AWS DynamoDB
+
+```bash
+STORAGE__PROVIDER=dynamo_db
+STORAGE__CONFIG__REGION=us-west-2
+STORAGE__CONFIG__ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
+STORAGE__CONFIG__SECRET_ACCESS_KEY=your-secret-key
+STORAGE__CONFIG__SESSION_TOKEN=your-session-token
+```
+
+### CouchDB
+
+```bash
+STORAGE__PROVIDER=couch_db
+STORAGE__CONFIG__HOSTNAME=couchdb.example.com
+STORAGE__CONFIG__PORT=5984
+STORAGE__CONFIG__USERNAME=admin
+STORAGE__CONFIG__PASSWORD=your-password
+```
+
+## Event Bus Configuration
+
+### RabbitMQ (AMQP)
+
+```bash
+# Publisher (outbound events)
+PUBLISHER_EVENT_BUS__LOG_LEVEL=info
+PUBLISHER_EVENT_BUS__ENABLED=true
+PUBLISHER_EVENT_BUS__PROVIDER=amqp
+PUBLISHER_EVENT_BUS__PROTOCOL=amqp
+PUBLISHER_EVENT_BUS__HOSTNAME=rabbitmq.lamassu-system.svc.cluster.local
+PUBLISHER_EVENT_BUS__PORT=5672
+PUBLISHER_EVENT_BUS__EXCHANGE=lamassu
+
+# Basic authentication
+PUBLISHER_EVENT_BUS__BASIC_AUTH__ENABLED=true
+PUBLISHER_EVENT_BUS__BASIC_AUTH__USERNAME=lamassu
+PUBLISHER_EVENT_BUS__BASIC_AUTH__PASSWORD=your-rabbitmq-password
+
+# Subscriber (inbound events)
+SUBSCRIBER_EVENT_BUS__LOG_LEVEL=info
+SUBSCRIBER_EVENT_BUS__ENABLED=true
+SUBSCRIBER_EVENT_BUS__PROVIDER=amqp
+SUBSCRIBER_EVENT_BUS__PROTOCOL=amqp
+SUBSCRIBER_EVENT_BUS__HOSTNAME=rabbitmq.lamassu-system.svc.cluster.local
+SUBSCRIBER_EVENT_BUS__PORT=5672
+SUBSCRIBER_EVENT_BUS__EXCHANGE=lamassu
+SUBSCRIBER_EVENT_BUS__BASIC_AUTH__ENABLED=true
+SUBSCRIBER_EVENT_BUS__BASIC_AUTH__USERNAME=lamassu
+SUBSCRIBER_EVENT_BUS__BASIC_AUTH__PASSWORD=your-rabbitmq-password
+
+# Dead Letter Queue (for failed messages)
+SUBSCRIBER_DLQ_EVENT_BUS__ENABLED=true
+SUBSCRIBER_DLQ_EVENT_BUS__PROVIDER=amqp
+SUBSCRIBER_DLQ_EVENT_BUS__PROTOCOL=amqp
+SUBSCRIBER_DLQ_EVENT_BUS__HOSTNAME=rabbitmq.lamassu-system.svc.cluster.local
+SUBSCRIBER_DLQ_EVENT_BUS__PORT=5672
+SUBSCRIBER_DLQ_EVENT_BUS__EXCHANGE=lamassu-dlq
+SUBSCRIBER_DLQ_EVENT_BUS__BASIC_AUTH__ENABLED=true
+SUBSCRIBER_DLQ_EVENT_BUS__BASIC_AUTH__USERNAME=lamassu
+SUBSCRIBER_DLQ_EVENT_BUS__BASIC_AUTH__PASSWORD=your-rabbitmq-password
+```
+
+#### AMQPS (TLS)
+
+```bash
+PUBLISHER_EVENT_BUS__PROTOCOL=amqps
+PUBLISHER_EVENT_BUS__CLIENT_TLS_AUTH__ENABLED=true
+PUBLISHER_EVENT_BUS__CLIENT_TLS_AUTH__CERT_FILE=/certs/client.crt
+PUBLISHER_EVENT_BUS__CLIENT_TLS_AUTH__KEY_FILE=/certs/client.key
+```
+
+### AWS SQS/SNS
+
+```bash
+PUBLISHER_EVENT_BUS__ENABLED=true
+PUBLISHER_EVENT_BUS__PROVIDER=aws_sqs_sns
+PUBLISHER_EVENT_BUS__REGION=us-west-2
+PUBLISHER_EVENT_BUS__ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
+PUBLISHER_EVENT_BUS__SECRET_ACCESS_KEY=your-secret-key
+```
+
+### Disable Event Bus
+
+```bash
+PUBLISHER_EVENT_BUS__ENABLED=false
+SUBSCRIBER_EVENT_BUS__ENABLED=false
+```
+
+<Note>
+  Disabling the event bus removes asynchronous processing. Services will still function but without event-driven automation.
+</Note>
+
+## Crypto Engine Configuration
+
+Crypto engines handle key generation, storage, and cryptographic operations. Multiple engines can be configured simultaneously.
+
+### Configuration Structure
+
+```bash
+# Engine 1
+CRYPTO_ENGINES__0__ID=vault-primary
+CRYPTO_ENGINES__0__TYPE=hashicorp_vault
+CRYPTO_ENGINES__0__PROTOCOL=https
+CRYPTO_ENGINES__0__HOSTNAME=vault.example.com
+CRYPTO_ENGINES__0__PORT=8200
+CRYPTO_ENGINES__0__ROLE_ID=your-role-id
+CRYPTO_ENGINES__0__SECRET_ID=your-secret-id
+CRYPTO_ENGINES__0__MOUNT_PATH=lamassu-pki
+
+# Engine 2 (fallback or different key types)
+CRYPTO_ENGINES__1__ID=aws-kms-backup
+CRYPTO_ENGINES__1__TYPE=aws_kms
+CRYPTO_ENGINES__1__REGION=us-west-2
+CRYPTO_ENGINES__1__ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
+CRYPTO_ENGINES__1__SECRET_ACCESS_KEY=your-secret-key
+```
+
+### HashiCorp Vault KV v2
+
+```bash
+CRYPTO_ENGINES__0__ID=vault-primary
+CRYPTO_ENGINES__0__TYPE=hashicorp_vault
+CRYPTO_ENGINES__0__PROTOCOL=https
+CRYPTO_ENGINES__0__HOSTNAME=vault.lamassu-system.svc.cluster.local
+CRYPTO_ENGINES__0__PORT=8200
+CRYPTO_ENGINES__0__BASE_PATH=/v1
+
+# AppRole authentication
+CRYPTO_ENGINES__0__ROLE_ID=your-vault-role-id
+CRYPTO_ENGINES__0__SECRET_ID=your-vault-secret-id
+
+# KV v2 mount path
+CRYPTO_ENGINES__0__MOUNT_PATH=lamassu-pki
+
+# Auto-unseal (development only)
+CRYPTO_ENGINES__0__AUTO_UNSEAL_ENABLED=false
+```
+
+<Warning>
+  Never enable `AUTO_UNSEAL_ENABLED` in production. Vault should be unsealed manually or using auto-unseal with a cloud KMS.
+</Warning>
+
+### AWS KMS
+
+```bash
+CRYPTO_ENGINES__0__ID=aws-kms-prod
+CRYPTO_ENGINES__0__TYPE=aws_kms
+CRYPTO_ENGINES__0__REGION=us-west-2
+
+# IAM credentials (prefer IAM roles in production)
+CRYPTO_ENGINES__0__ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
+CRYPTO_ENGINES__0__SECRET_ACCESS_KEY=your-secret-access-key
+CRYPTO_ENGINES__0__SESSION_TOKEN=optional-session-token
+```
+
+<Note>
+  In Kubernetes, use IRSA (IAM Roles for Service Accounts) instead of static credentials.
+</Note>
+
+### AWS Secrets Manager
+
+```bash
+CRYPTO_ENGINES__0__ID=aws-secrets-prod
+CRYPTO_ENGINES__0__TYPE=aws_secrets_manager
+CRYPTO_ENGINES__0__REGION=us-west-2
+CRYPTO_ENGINES__0__ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
+CRYPTO_ENGINES__0__SECRET_ACCESS_KEY=your-secret-access-key
+```
+
+### Filesystem (Development Only)
+
+```bash
+CRYPTO_ENGINES__0__ID=filesystem-dev
+CRYPTO_ENGINES__0__TYPE=filesystem
+CRYPTO_ENGINES__0__STORAGE_DIRECTORY=/tmp/lamassu-keys
+```
+
+<Warning>
+  Filesystem storage is **unencrypted** and should never be used in production. Keys are stored as plain PEM files.
+</Warning>
+
+### PKCS#11 HSM
+
+Connect to hardware security modules:
+
+```bash
+CRYPTO_ENGINES__0__ID=hsm-primary
+CRYPTO_ENGINES__0__TYPE=pkcs11
+CRYPTO_ENGINES__0__MODULE_PATH=/usr/lib/softhsm/libsofthsm2.so
+CRYPTO_ENGINES__0__PIN=your-hsm-pin
+CRYPTO_ENGINES__0__SLOT_ID=0
+```
+
+**Common module paths:**
+- SoftHSM: `/usr/lib/softhsm/libsofthsm2.so`
+- nCipher: `/opt/nfast/toolkits/pkcs11/libcknfast.so`
+- Thales Luna: `/usr/lib/libCryptoki2_64.so`
+- YubiHSM: `/usr/lib/x86_64-linux-gnu/pkcs11/yubihsm_pkcs11.so`
+
+## Service-Specific Configuration
+
+### CA Service
+
+```bash
+# Certificate monitoring job
+CERTIFICATE_MONITORING_JOB__ENABLED=true
+CERTIFICATE_MONITORING_JOB__FREQUENCY=2m
+
+# Validation Authority domains
+VA_SERVER_DOMAINS__0=va.lamassu.example.com
+VA_SERVER_DOMAINS__1=va-backup.lamassu.example.com
+
+# Allow cascade delete (dangerous!)
+ALLOW_CASCADE_DELETE=false
+```
+
+### Device Manager
+
+```bash
+# Device lifecycle automation
+DEVICE_MANAGER__AUTO_APPROVE_ENROLLMENTS=false
+DEVICE_MANAGER__MAX_DEVICES_PER_ACCOUNT=10000
+```
+
+### KMS Service
+
+KMS requires no additional configuration beyond crypto engines.
+
+### Validation Authority (VA)
+
+```bash
+# OCSP responder storage
+VA_STORAGE_DIRECTORY=/var/lamassu/va-cache
+```
+
+### Alerts Service
+
+```bash
+# Webhook configuration
+ALERTS__WEBHOOK__ENABLED=true
+ALERTS__WEBHOOK__URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+ALERTS__WEBHOOK__SECRET=your-webhook-secret
+
+# Email notifications
+ALERTS__EMAIL__ENABLED=true
+ALERTS__EMAIL__SMTP_HOST=smtp.gmail.com
+ALERTS__EMAIL__SMTP_PORT=587
+ALERTS__EMAIL__USERNAME=alerts@example.com
+ALERTS__EMAIL__PASSWORD=your-email-password
+ALERTS__EMAIL__FROM=Lamassu Alerts <alerts@example.com>
+```
+
+## Observability (OpenTelemetry)
+
+### Metrics
+
+```bash
+OTEL__METRICS__ENABLED=true
+OTEL__METRICS__EXPORTER=prometheus
+OTEL__METRICS__PROMETHEUS_PORT=9090
+```
+
+### Traces
+
+```bash
+OTEL__TRACES__ENABLED=true
+OTEL__TRACES__EXPORTER=otlp
+OTEL__TRACES__ENDPOINT=http://otel-collector:4318
+OTEL__TRACES__SAMPLE_RATE=0.1
+```
+
+### Logging
+
+```bash
+OTEL__LOGGING__ENABLED=true
+OTEL__LOGGING__EXPORTER=otlp
+OTEL__LOGGING__ENDPOINT=http://otel-collector:4318
+```
+
+## Monolithic-Specific Configuration
+
+These settings only apply to the monolithic deployment:
+
+```bash
+# Assembly mode: HTTP or IN_MEMORY
+ASSEMBLY_MODE=HTTP
+
+# Gateway ports
+GATEWAY_PORT_HTTPS=8443
+GATEWAY_PORT_HTTP=8080
+
+# UI port
+UI_PORT=3000
+
+# Populate sample data on startup
+POPULATE_SAMPLE_DATA=false
+
+# AWS IoT Manager connector
+AWS_IOT_MANAGER__ENABLED=false
+AWS_IOT_MANAGER__CONNECTOR_ID=aws.my-connector
+AWS_IOT_MANAGER__AWS_CONFIG__ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
+AWS_IOT_MANAGER__AWS_CONFIG__SECRET_ACCESS_KEY=your-secret-key
+AWS_IOT_MANAGER__AWS_CONFIG__REGION=us-west-2
+```
+
+## Configuration Examples
+
+### Development (Minimal)
+
+```bash
+LOGS__LEVEL=debug
+STORAGE__PROVIDER=sqlite
+STORAGE__CONFIG__PATH=file::memory:?cache=shared
+PUBLISHER_EVENT_BUS__ENABLED=false
+SUBSCRIBER_EVENT_BUS__ENABLED=false
+CRYPTO_ENGINES__0__ID=filesystem-dev
+CRYPTO_ENGINES__0__TYPE=filesystem
+CRYPTO_ENGINES__0__STORAGE_DIRECTORY=/tmp/lamassu-keys
+```
+
+### Production (Secure)
+
+```bash
+LOGS__LEVEL=info
+
+# PostgreSQL
+STORAGE__PROVIDER=postgres
+STORAGE__CONFIG__HOSTNAME=postgres.prod.example.com
+STORAGE__CONFIG__PORT=5432
+STORAGE__CONFIG__USERNAME=lamassu
+STORAGE__CONFIG__PASSWORD=${DB_PASSWORD}
+
+# RabbitMQ
+PUBLISHER_EVENT_BUS__ENABLED=true
+PUBLISHER_EVENT_BUS__PROVIDER=amqp
+PUBLISHER_EVENT_BUS__PROTOCOL=amqps
+PUBLISHER_EVENT_BUS__HOSTNAME=rabbitmq.prod.example.com
+PUBLISHER_EVENT_BUS__PORT=5671
+PUBLISHER_EVENT_BUS__BASIC_AUTH__USERNAME=lamassu
+PUBLISHER_EVENT_BUS__BASIC_AUTH__PASSWORD=${RABBITMQ_PASSWORD}
+
+# HashiCorp Vault
+CRYPTO_ENGINES__0__ID=vault-prod
+CRYPTO_ENGINES__0__TYPE=hashicorp_vault
+CRYPTO_ENGINES__0__PROTOCOL=https
+CRYPTO_ENGINES__0__HOSTNAME=vault.prod.example.com
+CRYPTO_ENGINES__0__PORT=8200
+CRYPTO_ENGINES__0__ROLE_ID=${VAULT_ROLE_ID}
+CRYPTO_ENGINES__0__SECRET_ID=${VAULT_SECRET_ID}
+
+# mTLS
+SERVER__AUTHENTICATION__MUTUAL_TLS__ENABLED=true
+SERVER__AUTHENTICATION__MUTUAL_TLS__VALIDATION_MODE=strict
+SERVER__AUTHENTICATION__MUTUAL_TLS__CA_CERT_FILE=/certs/ca.crt
+
+# Observability
+OTEL__TRACES__ENABLED=true
+OTEL__METRICS__ENABLED=true
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monolithic Deployment" icon="cube" href="/deployment/monolithic">
+    Quick start with all-in-one deployment
+  </Card>
+  <Card title="Kubernetes Deployment" icon="dharmachakra" href="/deployment/kubernetes">
+    Production microservices architecture
+  </Card>
+</CardGroup>

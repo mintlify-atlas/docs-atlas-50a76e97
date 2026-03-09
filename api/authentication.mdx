@@ -1,0 +1,361 @@
+---
+title: Authentication
+description: API authentication methods including JWT bearer tokens and mutual TLS
+---
+
+The Lamassu IoT Platform supports two primary authentication methods: **JWT bearer tokens** for management operations and **mutual TLS (mTLS)** for device enrollment and EST operations.
+
+## JWT Bearer Token Authentication
+
+### Overview
+
+All management API endpoints require JWT (JSON Web Token) authentication using the Bearer scheme. This is the primary authentication method for:
+
+- Certificate Authority operations (`/api/ca/v1`)
+- Device Manager operations (`/api/devmanager/v1`)
+- DMS Manager operations (`/api/dmsmanager/v1`)
+- Key Management Service (`/api/kms/v1`)
+
+### Request Format
+
+Include the JWT token in the `Authorization` header with the `Bearer` prefix:
+
+```http
+GET /api/ca/v1/cas HTTP/1.1
+Host: your-instance.com
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+### Example with cURL
+
+```bash
+curl "https://your-instance.com/api/ca/v1/cas" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Token Acquisition
+
+<Warning>
+  The exact JWT issuance mechanism depends on your Lamassu deployment configuration. Consult your administrator or IdP (Identity Provider) documentation for token acquisition details.
+</Warning>
+
+Typical token acquisition flows:
+
+1. **OAuth 2.0 / OIDC**: Obtain tokens from your identity provider (Keycloak, Auth0, etc.)
+2. **Service Accounts**: Use client credentials flow for machine-to-machine authentication
+3. **User Login**: Interactive login flow for human users
+
+### Token Format
+
+Lamassu expects standard JWT tokens with the following characteristics:
+
+<ParamField name="alg" type="string" required>
+  Signing algorithm (typically `RS256` for RSA signatures)
+</ParamField>
+
+<ParamField name="typ" type="string" required>
+  Token type (`JWT`)
+</ParamField>
+
+The JWT payload must include:
+
+<ResponseField name="sub" type="string" required>
+  Subject identifier (user or service account ID)
+</ResponseField>
+
+<ResponseField name="exp" type="integer" required>
+  Expiration timestamp (Unix epoch seconds)
+</ResponseField>
+
+<ResponseField name="iat" type="integer" required>
+  Issued-at timestamp (Unix epoch seconds)
+</ResponseField>
+
+### Token Validation
+
+The API server validates:
+
+1. **Signature**: Verifies the JWT signature against configured public keys
+2. **Expiration**: Rejects expired tokens
+3. **Issuer**: Validates the token issuer matches expected IdP
+4. **Audience**: Ensures the token is intended for the API
+
+### Authentication Errors
+
+<CodeGroup>
+```json 401 Missing Token
+{
+  "err": "missing authorization header"
+}
+```
+
+```json 401 Invalid Token
+{
+  "err": "invalid or expired token"
+}
+```
+
+```json 401 Signature Verification Failed
+{
+  "err": "token signature verification failed"
+}
+```
+</CodeGroup>
+
+## Mutual TLS (mTLS) Authentication
+
+### Overview
+
+Mutual TLS authentication is used for device enrollment and EST (Enrollment over Secure Transport) operations. This authentication method requires both the server and client to present valid X.509 certificates.
+
+### When to Use mTLS
+
+mTLS is primarily used for:
+
+- **EST Enrollment**: RFC 7030 compliant enrollment endpoints (`/.well-known/est`)
+- **Device Authentication**: Device-to-platform secure communication
+- **Certificate Renewal**: Authenticating renewal requests with existing certificates
+
+### EST Endpoints
+
+The DMS Manager service provides EST endpoints that require client certificate authentication:
+
+```
+https://your-instance.com/.well-known/est/{dms-id}/simpleenroll
+https://your-instance.com/.well-known/est/{dms-id}/simplereenroll
+https://your-instance.com/.well-known/est/{dms-id}/cacerts
+```
+
+### Client Certificate Requirements
+
+For successful mTLS authentication:
+
+<ParamField name="Client Certificate" type="X.509" required>
+  Valid X.509 certificate issued by a trusted CA
+</ParamField>
+
+<ParamField name="Private Key" type="PEM" required>
+  Corresponding private key for the client certificate
+</ParamField>
+
+<ParamField name="CA Chain" type="X.509[]">
+  Certificate chain to validate the client certificate
+</ParamField>
+
+### Example with cURL
+
+```bash
+curl "https://your-instance.com/.well-known/est/my-dms/simpleenroll" \
+  --cert client-cert.pem \
+  --key client-key.pem \
+  --cacert ca-chain.pem \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary @device.csr
+```
+
+### Example with OpenSSL
+
+```bash
+openssl s_client \
+  -connect your-instance.com:443 \
+  -cert client-cert.pem \
+  -key client-key.pem \
+  -CAfile ca-chain.pem \
+  -showcerts
+```
+
+### Certificate Validation
+
+The server validates:
+
+1. **Certificate Chain**: Client certificate must chain to a trusted root CA
+2. **Certificate Validity**: Current time within `notBefore` and `notAfter` dates
+3. **Revocation Status**: Certificate must not be revoked (CRL/OCSP check)
+4. **Extended Key Usage**: Certificate must have appropriate EKU for client authentication
+
+### mTLS Authentication Errors
+
+<CodeGroup>
+```json 401 No Client Certificate
+{
+  "err": "client certificate required"
+}
+```
+
+```json 401 Untrusted Certificate
+{
+  "err": "client certificate not issued by trusted CA"
+}
+```
+
+```json 401 Certificate Expired
+{
+  "err": "client certificate has expired"
+}
+```
+
+```json 401 Certificate Revoked
+{
+  "err": "client certificate has been revoked"
+}
+```
+</CodeGroup>
+
+## Dual Authentication (EST)
+
+Some EST operations support **dual authentication** where both JWT and mTLS can be used:
+
+```bash
+curl "https://your-instance.com/.well-known/est/my-dms/simpleenroll" \
+  --cert client-cert.pem \
+  --key client-key.pem \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary @device.csr
+```
+
+This allows administrators to perform enrollment operations on behalf of devices.
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Token Storage and Handling">
+    - **Never hardcode** JWT tokens in source code
+    - Store tokens securely using environment variables or secret management systems
+    - Rotate tokens regularly (before expiration)
+    - Use short-lived tokens with refresh token mechanisms when possible
+  </Accordion>
+
+  <Accordion title="Private Key Protection">
+    - Store private keys in hardware security modules (HSMs) when possible
+    - Use file permissions (e.g., `chmod 400`) to restrict key access
+    - Never transmit private keys over insecure channels
+    - Consider using PKCS#11 or cloud KMS for key storage
+  </Accordion>
+
+  <Accordion title="Transport Security">
+    - Always use HTTPS/TLS for API communication
+    - Verify server certificates to prevent man-in-the-middle attacks
+    - Use TLS 1.2 or higher
+    - Disable weak cipher suites
+  </Accordion>
+
+  <Accordion title="Token Validation">
+    - Implement client-side token expiration checking
+    - Handle 401 errors gracefully with token refresh logic
+    - Monitor for authentication failures indicating potential security issues
+  </Accordion>
+</AccordionGroup>
+
+## Authentication Flow Examples
+
+### Standard Management Operations
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant IdP as Identity Provider
+    participant API as Lamassu API
+    
+    Client->>IdP: Authenticate (username/password)
+    IdP->>Client: JWT Token
+    Client->>API: GET /api/ca/v1/cas<br/>Authorization: Bearer {token}
+    API->>API: Validate JWT
+    API->>Client: 200 OK + CA List
+```
+
+### EST Device Enrollment
+
+```mermaid
+sequenceDiagram
+    participant Device
+    participant EST as EST Endpoint
+    participant DMS
+    participant CA
+    
+    Device->>EST: POST /simpleenroll<br/>Client Certificate + CSR
+    EST->>EST: Validate Client Certificate
+    EST->>DMS: Process Enrollment
+    DMS->>CA: Sign Certificate
+    CA->>DMS: Signed Certificate
+    DMS->>EST: Certificate
+    EST->>Device: PKCS#7 Certificate
+```
+
+## Environment-Specific Configuration
+
+Authentication configuration varies by environment:
+
+<CodeGroup>
+```bash Development
+export LAMASSU_API_URL="https://dev.lamassu.local"
+export LAMASSU_TOKEN="dev-token-12345"
+```
+
+```bash Production
+export LAMASSU_API_URL="https://api.lamassu.io"
+export LAMASSU_TOKEN="$(vault read -field=token secret/lamassu/api-token)"
+```
+</CodeGroup>
+
+## Troubleshooting
+
+### Common Issues
+
+| Problem | Cause | Solution |
+|---------|-------|----------|
+| 401 Unauthorized | Expired token | Refresh or obtain a new token |
+| Token validation fails | Clock skew | Synchronize system clock with NTP |
+| mTLS handshake failure | Incorrect certificate | Verify certificate matches expected CA |
+| Certificate not trusted | Missing CA in trust store | Add CA certificate to trust store |
+
+### Debugging Tips
+
+1. **Check Token Claims**: Decode JWT at [jwt.io](https://jwt.io) to inspect claims
+2. **Verify Certificate**: Use `openssl x509 -in cert.pem -text -noout` to inspect certificate details
+3. **Test Connectivity**: Use `curl -v` for verbose output showing TLS handshake
+4. **Check Logs**: Review API server logs for detailed error messages
+
+## SDK Support
+
+Official Lamassu SDKs handle authentication automatically:
+
+<CodeGroup>
+```go Go SDK
+import "github.com/lamassuiot/lamassuiot/v2/pkg/client"
+
+cfg := client.ClientConfiguration{
+    URL: "https://your-instance.com",
+    AuthMethod: client.JWT,
+    AuthToken: os.Getenv("LAMASSU_TOKEN"),
+}
+
+caClient, err := client.NewCAClient(cfg)
+```
+
+```python Python SDK (Example)
+import lamassu
+
+client = lamassu.Client(
+    base_url="https://your-instance.com",
+    token=os.environ["LAMASSU_TOKEN"]
+)
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Overview" icon="book" href="/api/overview">
+    Learn about base URLs and common patterns
+  </Card>
+  <Card title="Filtering & Sorting" icon="filter" href="/api/filtering">
+    Filter resources with JSONPath expressions
+  </Card>
+  <Card title="CA API" icon="certificate" href="/api/ca/overview">
+    Start managing certificate authorities
+  </Card>
+  <Card title="Security Best Practices" icon="shield" href="/security/overview">
+    Comprehensive security guidelines
+  </Card>
+</CardGroup>

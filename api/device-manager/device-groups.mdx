@@ -1,0 +1,563 @@
+---
+title: 'Device Groups'
+description: 'Organize devices with dynamic hierarchical groups based on filter criteria'
+---
+
+Device groups enable dynamic organization of devices using flexible filter criteria. Groups automatically populate based on device attributes like tags, status, DMS, and metadata. Groups can be organized hierarchically with parent-child relationships, where child groups inherit criteria from their ancestors.
+
+## List Device Groups
+
+<api-endpoint method="GET" path="/api/devmanager/v1/device-groups" />
+
+Retrieve all device groups with optional pagination, sorting, and filtering.
+
+### Query Parameters
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination token from previous response
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field name to sort by (e.g., `name`, `created_at`, `updated_at`)
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort direction: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Filter expression. Supports:
+  - `id` - Group identifier
+  - `name` - Group name
+  - `parent_id` - Parent group identifier
+  - `created_at` - Creation timestamp
+  - `updated_at` - Last update timestamp
+</ParamField>
+
+### Response
+
+<ResponseField name="next" type="string">
+  Bookmark for the next page
+</ResponseField>
+
+<ResponseField name="list" type="array">
+  Array of device group objects
+  
+  <ResponseField name="id" type="string">
+    Group identifier (UUID)
+  </ResponseField>
+  
+  <ResponseField name="name" type="string">
+    Group name
+  </ResponseField>
+  
+  <ResponseField name="description" type="string">
+    Group description
+  </ResponseField>
+  
+  <ResponseField name="parent_id" type="string">
+    Parent group ID (null for root groups)
+  </ResponseField>
+  
+  <ResponseField name="criteria" type="array">
+    Filter criteria defined for this group
+    
+    <ResponseField name="field" type="string">
+      Device field to filter (id, dms_owner, status, tags, creation_timestamp, metadata)
+    </ResponseField>
+    
+    <ResponseField name="operand" type="string">
+      Filter operator (contains, eq, ne, etc.)
+    </ResponseField>
+    
+    <ResponseField name="value" type="string">
+      Filter value
+    </ResponseField>
+  </ResponseField>
+  
+  <ResponseField name="inherited_criteria" type="array">
+    Filters inherited from ancestor groups (composed root to parent)
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="string">
+    ISO 8601 creation timestamp
+  </ResponseField>
+  
+  <ResponseField name="updated_at" type="string">
+    ISO 8601 last update timestamp
+  </ResponseField>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/device-groups" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "next": "",
+  "list": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Production Devices",
+      "description": "All production environment devices",
+      "parent_id": null,
+      "criteria": [
+        {
+          "field": "tags",
+          "operand": "contains",
+          "value": "production"
+        }
+      ],
+      "inherited_criteria": [],
+      "created_at": "2026-01-15T10:00:00Z",
+      "updated_at": "2026-01-15T10:00:00Z"
+    },
+    {
+      "id": "660e8400-e29b-41d4-a716-446655440001",
+      "name": "Production Sensors",
+      "description": "Production sensors only",
+      "parent_id": "550e8400-e29b-41d4-a716-446655440000",
+      "criteria": [
+        {
+          "field": "tags",
+          "operand": "contains",
+          "value": "sensor"
+        }
+      ],
+      "inherited_criteria": [
+        {
+          "field": "tags",
+          "operand": "contains",
+          "value": "production"
+        }
+      ],
+      "created_at": "2026-01-15T11:00:00Z",
+      "updated_at": "2026-01-15T11:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## Create Device Group
+
+<api-endpoint method="POST" path="/api/devmanager/v1/device-groups" />
+
+Create a new device group with optional parent and filter criteria.
+
+### Request Body
+
+<ParamField body="id" type="string" required>
+  Unique group identifier (UUID format)
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Group name (1-255 characters)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Group description
+</ParamField>
+
+<ParamField body="parent_id" type="string">
+  Parent group ID for hierarchical organization (null for root groups)
+</ParamField>
+
+<ParamField body="criteria" type="array" required>
+  Filter criteria array. Each criterion includes:
+  
+  <ParamField body="field" type="string" required>
+    Device field: `id`, `dms_owner`, `status`, `tags`, `creation_timestamp`, or `metadata`
+  </ParamField>
+  
+  <ParamField body="operand" type="string" required>
+    Filter operator. Supported operators by field type:
+    
+    **String fields** (id, dms_owner):
+    - `eq`, `equal` - Exact match (case-sensitive)
+    - `eq_ic`, `equal_ignorecase` - Exact match (case-insensitive)
+    - `ne`, `notequal` - Not equal (case-sensitive)
+    - `ne_ic`, `notequal_ignorecase` - Not equal (case-insensitive)
+    - `ct`, `contains` - Contains substring (case-sensitive)
+    - `ct_ic`, `contains_ignorecase` - Contains substring (case-insensitive)
+    - `nc`, `notcontains` - Does not contain (case-sensitive)
+    - `nc_ic`, `notcontains_ignorecase` - Does not contain (case-insensitive)
+    
+    **Array fields** (tags):
+    - `contains` - Array contains value (case-sensitive)
+    - `contains_ignorecase` - Array contains value (case-insensitive)
+    
+    **Date fields** (creation_timestamp):
+    - `eq`, `equal` - Exact date match
+    - `bf`, `before` - Before date
+    - `af`, `after` - After date
+    
+    **Enum fields** (status):
+    - `eq`, `equal` - Exact match
+    - `ne`, `notequal` - Not equal
+    
+    **JSON fields** (metadata):
+    - `jsonpath` - JSONPath expression
+  </ParamField>
+  
+  <ParamField body="value" type="string" required>
+    Value to compare against
+  </ParamField>
+</ParamField>
+
+### Response
+
+Returns the created device group object including:
+- `criteria`: The filters specified in the request
+- `inherited_criteria`: All filters from ancestor groups (parent, grandparent, etc.)
+
+### Example: Create Root Group
+
+```bash
+curl -X POST "https://your-instance.com/api/devmanager/v1/device-groups" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Production Devices",
+    "description": "All production environment devices",
+    "criteria": [
+      {
+        "field": "tags",
+        "operand": "contains",
+        "value": "production"
+      }
+    ]
+  }'
+```
+
+### Example: Create Nested Group
+
+```bash
+curl -X POST "https://your-instance.com/api/devmanager/v1/device-groups" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "660e8400-e29b-41d4-a716-446655440001",
+    "name": "Active Production Sensors",
+    "description": "Active sensors in production",
+    "parent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "criteria": [
+      {
+        "field": "tags",
+        "operand": "contains",
+        "value": "sensor"
+      },
+      {
+        "field": "status",
+        "operand": "eq",
+        "value": "ACTIVE"
+      }
+    ]
+  }'
+```
+
+---
+
+## Get Device Group by ID
+
+<api-endpoint method="GET" path="/api/devmanager/v1/device-groups/{id}" />
+
+Retrieve a specific device group by identifier.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device group identifier (UUID)
+</ParamField>
+
+### Response
+
+Returns the device group object including:
+- `criteria`: Filters defined for this group
+- `inherited_criteria`: Filters from ancestor groups
+
+### Example Request
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/device-groups/550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Update Device Group
+
+<api-endpoint method="PUT" path="/api/devmanager/v1/device-groups/{id}" />
+
+Update an existing device group's name, description, parent, or criteria.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device group identifier (UUID)
+</ParamField>
+
+### Request Body
+
+<ParamField body="name" type="string">
+  Updated group name (1-255 characters)
+</ParamField>
+
+<ParamField body="description" type="string">
+  Updated description
+</ParamField>
+
+<ParamField body="parent_id" type="string">
+  Updated parent group ID (validated for circular references)
+</ParamField>
+
+<ParamField body="criteria" type="array">
+  Updated filter criteria (same format as create)
+</ParamField>
+
+### Response
+
+Returns the updated device group with all filters from the hierarchy.
+
+### Example Request
+
+```bash
+curl -X PUT "https://your-instance.com/api/devmanager/v1/device-groups/550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Production Devices (Updated)",
+    "description": "Updated description",
+    "criteria": [
+      {
+        "field": "tags",
+        "operand": "contains",
+        "value": "production"
+      },
+      {
+        "field": "status",
+        "operand": "eq",
+        "value": "ACTIVE"
+      }
+    ]
+  }'
+```
+
+---
+
+## Delete Device Group
+
+<api-endpoint method="DELETE" path="/api/devmanager/v1/device-groups/{id}" />
+
+Delete a device group. Child groups are not automatically deleted.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device group identifier (UUID)
+</ParamField>
+
+### Response
+
+Returns `204 No Content` on success.
+
+### Example Request
+
+```bash
+curl -X DELETE "https://your-instance.com/api/devmanager/v1/device-groups/550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+---
+
+## Get Devices in Group
+
+<api-endpoint method="GET" path="/api/devmanager/v1/device-groups/{id}/devices" />
+
+Retrieve all devices matching the group's filter criteria. Criteria are inherited and composed from parent groups in the hierarchy.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device group identifier (UUID)
+</ParamField>
+
+### Query Parameters
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page
+</ParamField>
+
+<ParamField query="bookmark" type="string">
+  Pagination token from previous response
+</ParamField>
+
+<ParamField query="sort_by" type="string">
+  Field name to sort by
+</ParamField>
+
+<ParamField query="sort_mode" type="string">
+  Sort direction: `asc` or `desc`
+</ParamField>
+
+<ParamField query="filter" type="string">
+  Additional filter expressions (applied on top of group criteria)
+</ParamField>
+
+### Response
+
+Returns the same structure as [List Devices](/api/device-manager/devices#list-devices).
+
+### Example Request
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/device-groups/660e8400-e29b-41d4-a716-446655440001/devices?page_size=50" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "next": "",
+  "list": [
+    {
+      "id": "dev-001",
+      "tags": ["production", "sensor", "temperature"],
+      "status": "ACTIVE",
+      "icon": "thermometer",
+      "icon_color": "#FF5733",
+      "creation_timestamp": "2026-01-10T08:00:00Z",
+      "metadata": {
+        "location": "warehouse-a"
+      },
+      "dms_owner": "dms-prod"
+    }
+  ]
+}
+```
+
+---
+
+## Get Device Group Statistics
+
+<api-endpoint method="GET" path="/api/devmanager/v1/device-groups/{id}/stats" />
+
+Retrieve statistics for devices matching the group's filter criteria, including total count and status distribution.
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Device group identifier (UUID)
+</ParamField>
+
+### Response
+
+<ResponseField name="total_devices" type="integer">
+  Total number of devices in the group
+</ResponseField>
+
+<ResponseField name="devices_status" type="object">
+  Device count per status. Keys are status types:
+  - `NO_IDENTITY`
+  - `ACTIVE`
+  - `RENEWAL_WINDOW`
+  - `ABOUT_TO_EXPIRE`
+  - `EXPIRED`
+  - `REVOKED`
+  - `DECOMMISSIONED`
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X GET "https://your-instance.com/api/devmanager/v1/device-groups/660e8400-e29b-41d4-a716-446655440001/stats" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### Example Response
+
+```json
+{
+  "total_devices": 150,
+  "devices_status": {
+    "NO_IDENTITY": 10,
+    "ACTIVE": 100,
+    "RENEWAL_WINDOW": 15,
+    "ABOUT_TO_EXPIRE": 5,
+    "EXPIRED": 8,
+    "REVOKED": 7,
+    "DECOMMISSIONED": 5
+  }
+}
+```
+
+---
+
+## Hierarchical Group Examples
+
+### Three-Level Hierarchy
+
+Create a three-level group hierarchy:
+
+```bash
+# Level 1: Production devices (root)
+curl -X POST "https://your-instance.com/api/devmanager/v1/device-groups" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "group-prod",
+    "name": "Production",
+    "criteria": [{"field": "tags", "operand": "contains", "value": "production"}]
+  }'
+
+# Level 2: Production sensors (child of Production)
+curl -X POST "https://your-instance.com/api/devmanager/v1/device-groups" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "group-prod-sensors",
+    "name": "Production Sensors",
+    "parent_id": "group-prod",
+    "criteria": [{"field": "tags", "operand": "contains", "value": "sensor"}]
+  }'
+
+# Level 3: Active production temperature sensors (child of Production Sensors)
+curl -X POST "https://your-instance.com/api/devmanager/v1/device-groups" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "group-prod-temp-sensors",
+    "name": "Active Production Temperature Sensors",
+    "parent_id": "group-prod-sensors",
+    "criteria": [
+      {"field": "tags", "operand": "contains", "value": "temperature"},
+      {"field": "status", "operand": "eq", "value": "ACTIVE"}
+    ]
+  }'
+```
+
+The bottom-level group will inherit criteria from both ancestors, effectively matching devices with:
+- Tag contains "production" (from grandparent)
+- Tag contains "sensor" (from parent)
+- Tag contains "temperature" (own criteria)
+- Status equals "ACTIVE" (own criteria)
+
+### Filter Root Groups
+
+```bash
+# Get all root groups (groups with no parent)
+curl "https://your-instance.com/api/devmanager/v1/device-groups?filter=parent_id[is_null]:true" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```

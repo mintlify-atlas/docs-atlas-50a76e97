@@ -1,0 +1,559 @@
+---
+title: Filtering and Sorting
+description: Advanced resource filtering using JSONPath expressions and server-side sorting
+---
+
+The Lamassu API supports powerful server-side filtering and sorting on list endpoints, allowing you to query resources based on field values, nested JSON properties, and complex expressions.
+
+## Overview
+
+Filtering capabilities:
+
+- **Scalar Fields**: Filter by string, number, date, and enum fields
+- **JSON Fields**: Use JSONPath expressions to query nested metadata
+- **Array Fields**: Search within arrays (tags, lists)
+- **Multiple Filters**: Combine multiple conditions with AND logic
+- **Server-Side Processing**: Efficient filtering at the database level
+
+## Basic Filtering Syntax
+
+### Query Parameter Format
+
+```http
+GET /api/ca/v1/cas?filter=<field>[<operator>]<value>
+```
+
+<ParamField query="filter" type="string" repeatable>
+  Filter expression in the format `field[operator]value`. Can be specified multiple times for AND conditions.
+</ParamField>
+
+### Example Requests
+
+<CodeGroup>
+```bash Equal Filter
+curl "https://your-instance.com/api/ca/v1/cas?filter=status[eq]=ACTIVE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Contains Filter
+curl "https://your-instance.com/api/devmanager/v1/devices?filter=tags[ct]=production" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Multiple Filters
+curl "https://your-instance.com/api/ca/v1/cas?filter=status[eq]=ACTIVE&filter=engine_id[eq]=aws-kms" \
+  -H "Authorization: Bearer $TOKEN"
+```
+</CodeGroup>
+
+## Filter Operators
+
+### String Operators
+
+| Operator | Meaning | Example | Description |
+|----------|---------|---------|-------------|
+| `eq` | Equal | `name[eq]=production` | Exact match (case-sensitive) |
+| `eq_ic` | Equal (case-insensitive) | `name[eq_ic]=Production` | Case-insensitive match |
+| `ne` | Not equal | `status[ne]=REVOKED` | Does not match |
+| `ne_ic` | Not equal (case-insensitive) | `name[ne_ic]=test` | Case-insensitive non-match |
+| `ct` | Contains | `description[ct]=backup` | Substring search |
+| `ct_ic` | Contains (case-insensitive) | `description[ct_ic]=Backup` | Case-insensitive substring |
+| `nc` | Not contains | `description[nc]=deprecated` | Does not contain substring |
+| `nc_ic` | Not contains (case-insensitive) | `description[nc_ic]=DEPRECATED` | Case-insensitive exclusion |
+
+**Examples:**
+
+```bash
+# Find CAs with "root" in the common name (case-insensitive)
+GET /api/ca/v1/cas?filter=subject.common_name[ct_ic]=root
+
+# Find devices not tagged with "test"
+GET /api/devmanager/v1/devices?filter=tags[nc]=test
+```
+
+### Date Operators
+
+| Operator | Meaning | Example | Description |
+|----------|---------|---------|-------------|
+| `bf` | Before | `creation_ts[bf]=2026-01-01` | Date before specified time |
+| `af` | After | `valid_from[af]=2025-01-01` | Date after specified time |
+
+**Date Format**: ISO 8601 format (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SSZ`)
+
+**Examples:**
+
+```bash
+# Find certificates expiring before March 2026
+GET /api/ca/v1/certificates?filter=valid_to[bf]=2026-03-01T00:00:00Z
+
+# Find devices created after January 1, 2026
+GET /api/devmanager/v1/devices?filter=creation_timestamp[af]=2026-01-01
+```
+
+### Numeric Operators
+
+| Operator | Meaning | Example | Description |
+|----------|---------|---------|-------------|
+| `lt` | Less than | `level[lt]=3` | Value less than |
+| `le` | Less than or equal | `size[le]=2048` | Value less than or equal |
+| `gt` | Greater than | `level[gt]=0` | Value greater than |
+| `ge` | Greater than or equal | `size[ge]=2048` | Value greater than or equal |
+
+**Examples:**
+
+```bash
+# Find CAs at level 2 or higher
+GET /api/ca/v1/cas?filter=level[ge]=2
+
+# Find keys smaller than 4096 bits
+GET /api/kms/v1/keys?filter=size[lt]=4096
+```
+
+### Array Operators
+
+For array fields (like `tags`), use string operators:
+
+```bash
+# Find devices tagged with "production"
+GET /api/devmanager/v1/devices?filter=tags[ct]=production
+
+# Find devices with tags containing "api" (case-insensitive)
+GET /api/devmanager/v1/devices?filter=tags[ct_ic]=API
+```
+
+## JSONPath Filtering
+
+### Overview
+
+For JSON fields (`metadata`, `settings`), use the `jsonpath` operator with PostgreSQL JSONPath expressions:
+
+```http
+GET /resource?filter=<field>[jsonpath]<expression>
+```
+
+<Note>
+  JSONPath filtering uses PostgreSQL's native JSONPath implementation, providing powerful querying capabilities for nested JSON structures.
+</Note>
+
+### Basic JSONPath Expressions
+
+#### Existence Check
+
+```bash
+# Check if metadata.environment exists
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.environment)
+```
+
+#### String Equality
+
+```bash
+# Filter by metadata.environment == "production"
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]$.environment%20==%20%22production%22
+```
+
+<Warning>
+  JSONPath expressions with spaces or special characters must be URL-encoded. Use `%20` for spaces and `%22` for quotes.
+</Warning>
+
+#### Numeric Comparison
+
+```bash
+# Filter by metadata.priority > 5
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]$.priority%20%3E%205
+```
+
+#### Nested Properties
+
+```bash
+# Filter by nested property metadata.location.region
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]$.location.region%20==%20%22us-west-1%22
+```
+
+### Array Operations
+
+#### Array Contains Value
+
+```bash
+# Check if metadata.tags array contains "production"
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.tags[*]%20?%20(@%20==%20%22production%22))
+```
+
+#### Array Contains Object
+
+```bash
+# Check if array contains object with key == "production"
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.tags[*]%20?%20(@.key%20==%20%22production%22))
+```
+
+#### Array Index Access
+
+```bash
+# First element equals "staging"
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]$.tags[0]%20==%20%22staging%22
+
+# Last element equals "backend"
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]$.tags[last]%20==%20%22backend%22
+```
+
+#### Array Numeric Comparison
+
+```bash
+# Check if any port number > 8000
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.ports[*]%20?%20(@%20%3E%208000))
+```
+
+#### Multiple Array Conditions
+
+```bash
+# Array contains both "production" AND "api"
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]exists($.tags[*]%20?%20(@%20==%20%22production%22))%20%26%26%20exists($.tags[*]%20?%20(@%20==%20%22api%22))
+```
+
+### JSONPath Syntax Reference
+
+<ParamField name="$" type="root">
+  Root of the JSON document
+</ParamField>
+
+<ParamField name=".property" type="accessor">
+  Access object property
+</ParamField>
+
+<ParamField name="[index]" type="array">
+  Array element by index (0-based, or `last` for final element)
+</ParamField>
+
+<ParamField name="[*]" type="iterator">
+  Array element iterator
+</ParamField>
+
+<ParamField name="?" type="filter">
+  Filter predicate for array elements
+</ParamField>
+
+<ParamField name="@" type="current">
+  Current element in array filter
+</ParamField>
+
+<ParamField name="exists()" type="function">
+  Check if path or condition exists
+</ParamField>
+
+### Type-Aware Comparisons
+
+JSONPath comparisons respect JSON types:
+
+- **Strings**: `$.name == "value"`
+- **Numbers**: `$.count > 10`
+- **Booleans**: `$.enabled == true`
+- **Null**: `$.field == null`
+
+## Sorting
+
+### Basic Sorting
+
+<ParamField query="sort_by" type="string">
+  Field name to sort by
+</ParamField>
+
+<ParamField query="sort_mode" type="string" default="asc">
+  Sort order: `asc` (ascending) or `desc` (descending)
+</ParamField>
+
+**Examples:**
+
+```bash
+# Sort CAs by creation time (newest first)
+GET /api/ca/v1/cas?sort_by=creation_ts&sort_mode=desc
+
+# Sort devices by status (ascending)
+GET /api/devmanager/v1/devices?sort_by=status&sort_mode=asc
+```
+
+### JSONPath Sorting
+
+Sort by nested JSON properties using the JSONPath syntax:
+
+```http
+GET /resource?sort_by=<field>[jsonpath]<expression>&sort_mode=asc|desc
+```
+
+**Examples:**
+
+```bash
+# Sort devices by metadata.environment (alphabetically)
+GET /api/devmanager/v1/devices?sort_by=metadata[jsonpath]$.environment&sort_mode=asc
+
+# Sort devices by metadata.priority (numeric descending)
+GET /api/devmanager/v1/devices?sort_by=metadata[jsonpath]$.priority&sort_mode=desc
+
+# Sort by nested property
+GET /api/devmanager/v1/devices?sort_by=metadata[jsonpath]$.location.region&sort_mode=asc
+```
+
+### Type-Aware Sorting
+
+The system automatically detects JSON value types for proper sorting:
+
+| Type | Behavior | Example |
+|------|----------|----------|
+| **String** | Alphabetical | `dev` → `prod` → `stage` |
+| **Number** | Numeric (not lexicographic) | `5` → `10` → `20` |
+| **Date** | Chronological (ISO 8601) | `2025-01-10` → `2026-01-15` |
+| **NULL** | Last (asc) or First (desc) | Configurable |
+
+### Combining Filters and Sorting
+
+```bash
+# Filter active devices and sort by priority
+GET /api/devmanager/v1/devices?filter=status[eq]=ACTIVE&sort_by=metadata[jsonpath]$.priority&sort_mode=desc
+
+# Filter by region and sort by environment
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]$.region%20==%20%22us-west%22&sort_by=metadata[jsonpath]$.environment&sort_mode=asc
+```
+
+## Filterable Fields by Resource
+
+### Certificate Authorities (CA)
+
+| Field | Type | Operators | Example |
+|-------|------|-----------|----------|
+| `id` | String | eq, ne, ct, nc | `id[eq]=root-ca` |
+| `status` | Enum | eq, ne | `status[eq]=ACTIVE` |
+| `level` | Number | lt, le, gt, ge | `level[ge]=2` |
+| `engine_id` | String | eq, ne, ct, nc | `engine_id[eq]=aws-kms` |
+| `valid_from` | Date | bf, af | `valid_from[af]=2026-01-01` |
+| `valid_to` | Date | bf, af | `valid_to[bf]=2027-01-01` |
+| `subject.common_name` | String | eq, ne, ct, nc | `subject.common_name[ct]=root` |
+| `metadata` | JSON | jsonpath | `metadata[jsonpath]$.env=="prod"` |
+
+### Certificates
+
+| Field | Type | Operators | Example |
+|-------|------|-----------|----------|
+| `serial_number` | String | eq, ne | `serial_number[eq]=0A1B2C` |
+| `status` | Enum | eq, ne | `status[eq]=ACTIVE` |
+| `type` | Enum | eq, ne | `type[eq]=MANAGED` |
+| `engine_id` | String | eq, ne | `engine_id[eq]=aws-kms` |
+| `valid_from` | Date | bf, af | `valid_from[af]=2026-01-01` |
+| `valid_to` | Date | bf, af | `valid_to[bf]=2026-12-31` |
+| `subject.common_name` | String | eq, ne, ct, nc | `subject.common_name[ct]=device` |
+| `metadata` | JSON | jsonpath | `metadata[jsonpath]$.purpose=="signing"` |
+
+### Devices
+
+| Field | Type | Operators | Example |
+|-------|------|-----------|----------|
+| `id` | String | eq, ne, ct, nc | `id[eq]=device-123` |
+| `dms_owner` | String | eq, ne | `dms_owner[eq]=my-dms` |
+| `status` | Enum | eq, ne | `status[eq]=ACTIVE` |
+| `creation_timestamp` | Date | bf, af | `creation_timestamp[af]=2026-01-01` |
+| `tags` | Array | ct, nc | `tags[ct]=production` |
+| `metadata` | JSON | jsonpath | `metadata[jsonpath]$.region=="us-west-1"` |
+
+### DMS Instances
+
+| Field | Type | Operators | Example |
+|-------|------|-----------|----------|
+| `id` | String | eq, ne, ct, nc | `id[eq]=my-dms` |
+| `name` | String | eq, ne, ct, nc | `name[ct]=production` |
+| `creation_date` | Date | bf, af | `creation_date[af]=2026-01-01` |
+| `metadata` | JSON | jsonpath | `metadata[jsonpath]$.region=="eu-west"` |
+| `settings` | JSON | jsonpath | `settings[jsonpath]$.auto_enroll==true` |
+
+### Keys (KMS)
+
+| Field | Type | Operators | Example |
+|-------|------|-----------|----------|
+| `key_id` | String | eq, ne | `key_id[eq]=signing-key-1` |
+| `engine_id` | String | eq, ne | `engine_id[eq]=aws-kms` |
+| `algorithm` | String | eq, ne, ct | `algorithm[ct]=RSA` |
+| `size` | Number | lt, le, gt, ge | `size[ge]=2048` |
+| `status` | String | eq, ne | `status[eq]=ENABLED` |
+| `creation_ts` | Date | bf, af | `creation_ts[af]=2026-01-01` |
+| `tags` | Array | ct, nc | `tags[ct]=production` |
+| `metadata` | JSON | jsonpath | `metadata[jsonpath]$.purpose=="signing"` |
+
+## Statistics with Filtering
+
+Statistics endpoints support filtering to compute aggregates on subsets:
+
+```bash
+# Get stats for active devices only
+GET /api/devmanager/v1/stats?filter=status[eq]=ACTIVE
+
+# Get stats for keys in specific engine
+GET /api/kms/v1/stats?filter=engine_id[eq]=aws-kms-prod
+
+# CA service supports dual filtering
+GET /api/ca/v1/stats?ca_filter=engine_id[eq]=aws-kms&cert_filter=valid_from[af]=2026-01-01
+```
+
+<Warning>
+  The `status` field **cannot** be used as a filter on statistics endpoints for CA, Certificate, and Device resources because status distribution is always computed.
+</Warning>
+
+## SDK Usage Examples
+
+<CodeGroup>
+```go Go SDK - Basic Filter
+qp := &resources.QueryParameters{
+    Filters: []resources.FilterOption{
+        {
+            Field:           "status",
+            Value:           "ACTIVE",
+            FilterOperation: resources.EnumEqual,
+        },
+    },
+}
+
+cas, err := caClient.GetCAs(ctx, services.GetCAsInput{
+    QueryParameters: qp,
+})
+```
+
+```go Go SDK - JSONPath Filter
+qp := &resources.QueryParameters{
+    Filters: []resources.FilterOption{
+        {
+            Field:           "metadata",
+            Value:           `$.environment == "production"`,
+            FilterOperation: resources.JsonPathExpression,
+        },
+    },
+}
+
+devices, err := deviceClient.GetDevices(ctx, services.GetDevicesInput{
+    QueryParameters: qp,
+})
+```
+
+```go Go SDK - Multiple Filters with Sorting
+qp := &resources.QueryParameters{
+    Filters: []resources.FilterOption{
+        {
+            Field:           "status",
+            Value:           "ACTIVE",
+            FilterOperation: resources.EnumEqual,
+        },
+        {
+            Field:           "metadata",
+            Value:           `$.region == "us-west-1"`,
+            FilterOperation: resources.JsonPathExpression,
+        },
+    },
+    Sort: resources.SortOptions{
+        SortMode:     resources.SortModeDesc,
+        SortField:    "metadata",
+        JsonPathExpr: "$.priority",
+    },
+}
+
+devices, err := deviceClient.GetDevices(ctx, services.GetDevicesInput{
+    QueryParameters: qp,
+})
+```
+</CodeGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="URL Encoding">
+    Always URL-encode filter values containing:
+    - Spaces (use `%20`)
+    - Quotes (use `%22`)
+    - Special operators (`>`, `<`, `=` become `%3E`, `%3C`, `%3D`)
+    
+    Most HTTP clients handle encoding automatically.
+  </Accordion>
+
+  <Accordion title="Filter Specificity">
+    Start with the most selective filters first to improve query performance:
+    
+    ```bash
+    # Good: Specific filter first
+    ?filter=status[eq]=ACTIVE&filter=metadata[jsonpath]$.env=="prod"
+    
+    # Less optimal: Generic filter first
+    ?filter=metadata[jsonpath]$.env=="prod"&filter=status[eq]=ACTIVE
+    ```
+  </Accordion>
+
+  <Accordion title="JSONPath Performance">
+    - Index frequently queried JSON fields in PostgreSQL for better performance
+    - Use simple existence checks when possible: `exists($.field)` vs complex predicates
+    - Avoid deep nesting when designing metadata schemas
+  </Accordion>
+
+  <Accordion title="Pagination with Filters">
+    Filters are preserved across pagination requests via the bookmark:
+    
+    ```bash
+    # First page
+    GET /api/ca/v1/cas?filter=status[eq]=ACTIVE&page_size=50
+    
+    # Subsequent pages automatically maintain filter
+    GET /api/ca/v1/cas?bookmark=<token>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Use Cases
+
+### Find Expiring Certificates
+
+```bash
+# Certificates expiring in next 30 days
+GET /api/ca/v1/certificates?filter=valid_to[bf]=2026-04-08T00:00:00Z&filter=status[eq]=ACTIVE
+```
+
+### Production Environment Resources
+
+```bash
+# All production devices
+GET /api/devmanager/v1/devices?filter=metadata[jsonpath]$.environment%20==%20%22production%22
+```
+
+### High-Priority Issues
+
+```bash
+# Devices with priority > 5 in US region
+GET /api/devmanager/v1/devices?\
+  filter=metadata[jsonpath]$.priority%20%3E%205&\
+  filter=metadata[jsonpath]$.region%20==%20%22us-west-1%22&\
+  sort_by=metadata[jsonpath]$.priority&\
+  sort_mode=desc
+```
+
+### Compliance Reporting
+
+```bash
+# Count CAs by environment
+GET /api/ca/v1/stats?ca_filter=metadata[jsonpath]$.environment%20==%20%22production%22
+```
+
+## Troubleshooting
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `field 'X' is not filterable` | Field not in allowed list | Check filterable fields table |
+| `invalid JSONPath expression` | Syntax error in JSONPath | Verify JSONPath syntax and URL encoding |
+| `invalid filter expression` | Malformed filter parameter | Use correct `field[op]value` format |
+| `status field cannot be filtered` | Status filter on stats endpoint | Remove status filter or use list endpoint |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Overview" icon="book" href="/api/overview">
+    Learn about base URLs and pagination
+  </Card>
+  <Card title="Authentication" icon="lock" href="/api/authentication">
+    Configure JWT and mTLS authentication
+  </Card>
+  <Card title="CA API" icon="certificate" href="/api/ca/overview">
+    Manage certificate authorities
+  </Card>
+  <Card title="Device API" icon="microchip" href="/api/devices/overview">
+    Device inventory operations
+  </Card>
+</CardGroup>
