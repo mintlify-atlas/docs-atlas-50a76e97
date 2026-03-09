@@ -1,0 +1,332 @@
+---
+title: Validation Authority Client
+description: Use the VA SDK client to validate certificate status via OCSP and CRL
+---
+
+The Validation Authority (VA) client provides certificate validation operations including OCSP (Online Certificate Status Protocol) and CRL (Certificate Revocation List) access.
+
+## Client Initialization
+
+```go
+import (
+    "net/http"
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+)
+
+// Create HTTP client
+httpClient := &http.Client{}
+
+// Initialize VA client
+vaClient := sdk.NewHttpVAClient(httpClient, "https://api.lamassu.io/api/va")
+```
+
+## OCSP Operations
+
+### OCSP GET Request
+
+Validate a certificate using OCSP with GET method.
+
+```go
+import (
+    "context"
+    "crypto/x509"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+)
+
+ctx := context.Background()
+
+// Load certificate and issuer
+cert, _ := x509.ParseCertificate(certBytes)
+issuer, _ := x509.ParseCertificate(issuerBytes)
+
+// Get OCSP response
+ocspResp, err := vaClient.GetOCSPResponseGet(ctx, services.GetOCSPResponseInput{
+    Certificate:    cert,
+    Issuer:         issuer,
+    VerifyResponse: true,
+})
+if err != nil {
+    // Handle error
+}
+
+switch ocspResp.Status {
+case 0: // Good
+    fmt.Println("Certificate is valid")
+case 1: // Revoked
+    fmt.Printf("Certificate revoked at: %v\n", ocspResp.RevokedAt)
+    fmt.Printf("Revocation reason: %d\n", ocspResp.RevocationReason)
+case 2: // Unknown
+    fmt.Println("Certificate status unknown")
+}
+```
+
+### OCSP POST Request
+
+Validate a certificate using OCSP with POST method.
+
+```go
+ocspResp, err := vaClient.GetOCSPResponsePost(ctx, services.GetOCSPResponseInput{
+    Certificate:    cert,
+    Issuer:         issuer,
+    VerifyResponse: true,
+})
+if err != nil {
+    // Handle error
+}
+
+fmt.Printf("Certificate status: %d\n", ocspResp.Status)
+```
+
+## CRL Operations
+
+### Get Certificate Revocation List
+
+Retrieve the CRL for a specific Certificate Authority.
+
+```go
+// Get CRL by CA Subject Key Identifier
+crl, err := vaClient.GetCRL(ctx, services.GetCRLResponseInput{
+    CASubjectKeyID: "E4:39:6B:19:0F:4E:4F:B4:4F:8A:29:6C:22:F3:7D:81:3F:6C:87:15",
+    Issuer:         issuerCert,
+    VerifyResponse: true,
+})
+if err != nil {
+    // Handle error
+}
+
+fmt.Printf("CRL issued by: %s\n", crl.Issuer)
+fmt.Printf("This update: %v\n", crl.ThisUpdate)
+fmt.Printf("Next update: %v\n", crl.NextUpdate)
+fmt.Printf("Revoked certificates: %d\n", len(crl.RevokedCertificateEntries))
+
+// Check if a specific certificate is revoked
+for _, revoked := range crl.RevokedCertificateEntries {
+    if revoked.SerialNumber.Cmp(cert.SerialNumber) == 0 {
+        fmt.Printf("Certificate revoked at: %v\n", revoked.RevocationTime)
+        break
+    }
+}
+```
+
+## VA Role Management
+
+### Get All VA Roles
+
+List all VA roles (CRL distribution points) configured in the system.
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/resources"
+)
+
+var roles []models.VARole
+
+bookmark, err := vaClient.GetVARoles(ctx, services.GetVARolesInput{
+    ExhaustiveRun: true,
+    ApplyFunc: func(role models.VARole) {
+        roles = append(roles, role)
+    },
+    QueryParameters: resources.QueryParameters{},
+})
+if err != nil {
+    // Handle error
+}
+
+for _, role := range roles {
+    fmt.Printf("CA SKI: %s\n", role.CASKI)
+    fmt.Printf("CRL enabled: %v\n", role.CRLRole.Enabled)
+}
+```
+
+### Get VA Role by CA
+
+Get the VA role for a specific Certificate Authority.
+
+```go
+role, err := vaClient.GetVARoleByID(ctx, services.GetVARoleInput{
+    CASubjectKeyID: "E4:39:6B:19:0F:4E:4F:B4:4F:8A:29:6C:22:F3:7D:81:3F:6C:87:15",
+})
+if err != nil {
+    // Handle error
+}
+
+fmt.Printf("CRL enabled: %v\n", role.CRLRole.Enabled)
+fmt.Printf("Update interval: %s\n", role.CRLRole.UpdateInterval)
+```
+
+### Update VA Role
+
+Update the VA role configuration for a CA.
+
+```go
+updatedRole, err := vaClient.UpdateVARole(ctx, services.UpdateVARoleInput{
+    CASubjectKeyID: "E4:39:6B:19:0F:4E:4F:B4:4F:8A:29:6C:22:F3:7D:81:3F:6C:87:15",
+    CRLRole: models.CRLRole{
+        Enabled:        true,
+        UpdateInterval: "24h",
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+fmt.Printf("Updated CRL interval: %s\n", updatedRole.CRLRole.UpdateInterval)
+```
+
+## Response Verification
+
+Enable response verification to ensure OCSP responses and CRLs are properly signed:
+
+```go
+// Verify OCSP response signature
+ocspResp, err := vaClient.GetOCSPResponseGet(ctx, services.GetOCSPResponseInput{
+    Certificate:    cert,
+    Issuer:         issuer,
+    VerifyResponse: true, // Enable verification
+})
+
+// Verify CRL signature
+crl, err := vaClient.GetCRL(ctx, services.GetCRLResponseInput{
+    CASubjectKeyID: caSKI,
+    Issuer:         issuerCert,
+    VerifyResponse: true, // Enable verification
+})
+```
+
+<Warning>
+Always enable `VerifyResponse` in production to ensure cryptographic integrity of validation responses.
+</Warning>
+
+## Error Handling
+
+```go
+ocspResp, err := vaClient.GetOCSPResponseGet(ctx, services.GetOCSPResponseInput{
+    Certificate:    cert,
+    Issuer:         issuer,
+    VerifyResponse: true,
+})
+if err != nil {
+    switch {
+    case strings.Contains(err.Error(), "certificate not found"):
+        // Certificate is not known to the VA
+    case strings.Contains(err.Error(), "signature verification failed"):
+        // OCSP response signature is invalid
+    case strings.Contains(err.Error(), "network error"):
+        // Network connectivity issue
+    default:
+        // Handle other errors
+    }
+    return err
+}
+```
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "crypto/x509"
+    "encoding/pem"
+    "fmt"
+    "log"
+    "net/http"
+    "os"
+
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+)
+
+func main() {
+    // Initialize client
+    httpClient := &http.Client{}
+    vaClient := sdk.NewHttpVAClient(httpClient, "https://api.lamassu.io/api/va")
+    ctx := context.Background()
+
+    // Load certificate to validate
+    certPEM, _ := os.ReadFile("device-cert.pem")
+    certBlock, _ := pem.Decode(certPEM)
+    cert, _ := x509.ParseCertificate(certBlock.Bytes)
+
+    // Load issuer certificate
+    issuerPEM, _ := os.ReadFile("ca-cert.pem")
+    issuerBlock, _ := pem.Decode(issuerPEM)
+    issuer, _ := x509.ParseCertificate(issuerBlock.Bytes)
+
+    // Validate via OCSP
+    ocspResp, err := vaClient.GetOCSPResponseGet(ctx, services.GetOCSPResponseInput{
+        Certificate:    cert,
+        Issuer:         issuer,
+        VerifyResponse: true,
+    })
+    if err != nil {
+        log.Fatalf("OCSP validation failed: %v", err)
+    }
+
+    switch ocspResp.Status {
+    case 0:
+        fmt.Println("✓ Certificate is valid (OCSP: Good)")
+    case 1:
+        fmt.Printf("✗ Certificate revoked at %v\n", ocspResp.RevokedAt)
+        fmt.Printf("  Reason: %d\n", ocspResp.RevocationReason)
+    case 2:
+        fmt.Println("? Certificate status unknown")
+    }
+
+    // Alternatively, validate via CRL
+    caSKI := fmt.Sprintf("%X", issuer.SubjectKeyId)
+    crl, err := vaClient.GetCRL(ctx, services.GetCRLResponseInput{
+        CASubjectKeyID: caSKI,
+        Issuer:         issuer,
+        VerifyResponse: true,
+    })
+    if err != nil {
+        log.Fatalf("CRL retrieval failed: %v", err)
+    }
+
+    fmt.Printf("\nCRL Information:\n")
+    fmt.Printf("  Issuer: %s\n", crl.Issuer)
+    fmt.Printf("  This Update: %v\n", crl.ThisUpdate)
+    fmt.Printf("  Next Update: %v\n", crl.NextUpdate)
+    fmt.Printf("  Revoked Certificates: %d\n", len(crl.RevokedCertificateEntries))
+
+    // Check if certificate is in CRL
+    isRevoked := false
+    for _, revoked := range crl.RevokedCertificateEntries {
+        if revoked.SerialNumber.Cmp(cert.SerialNumber) == 0 {
+            isRevoked = true
+            fmt.Printf("✗ Certificate found in CRL (revoked at %v)\n", revoked.RevocationTime)
+            break
+        }
+    }
+
+    if !isRevoked {
+        fmt.Println("✓ Certificate not in CRL")
+    }
+}
+```
+
+## OCSP vs CRL
+
+Choose the appropriate validation method for your use case:
+
+| Feature | OCSP | CRL |
+|---------|------|-----|
+| **Response Size** | Small (per-certificate) | Large (all revocations) |
+| **Freshness** | Real-time | Periodic updates |
+| **Privacy** | Reveals certificate being checked | Anonymous download |
+| **Network** | One request per validation | Download once, validate many |
+| **Best For** | Real-time validation | Bulk validation, offline scenarios |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Validation Authority API" icon="shield-check" href="/api/va/overview">
+    Explore the complete VA API
+  </Card>
+  <Card title="Certificate Management" icon="certificate" href="/concepts/certificate-authorities">
+    Learn about certificate lifecycle
+  </Card>
+</CardGroup>

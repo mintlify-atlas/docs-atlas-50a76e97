@@ -166,7 +166,9 @@
               "sdk/ca-client",
               "sdk/device-manager-client",
               "sdk/dms-manager-client",
-              "sdk/kms-client"
+              "sdk/kms-client",
+              "sdk/alerts-client",
+              "sdk/va-client"
             ]
           }
         ]

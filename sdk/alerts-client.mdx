@@ -1,0 +1,269 @@
+---
+title: Alerts Client
+description: Use the Alerts SDK client to manage event subscriptions and notifications
+---
+
+The Alerts client provides operations for managing event subscriptions and retrieving the latest events from the Lamassu IoT platform.
+
+## Client Initialization
+
+```go
+import (
+    "net/http"
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+)
+
+// Create HTTP client
+httpClient := &http.Client{}
+
+// Initialize Alerts client
+alertsClient := sdk.NewHttpAlertsClient(httpClient, "https://api.lamassu.io/api/alerts")
+```
+
+## Get Latest Events
+
+Retrieve the latest event for each event type in the system.
+
+```go
+import (
+    "context"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+)
+
+ctx := context.Background()
+
+events, err := alertsClient.GetLatestEventsPerEventType(ctx, &services.GetLatestEventsPerEventTypeInput{})
+if err != nil {
+    // Handle error
+}
+
+for _, event := range events {
+    fmt.Printf("Event Type: %s, Timestamp: %s\n", event.EventType, event.Timestamp)
+}
+```
+
+## User Subscriptions
+
+### Get User Subscriptions
+
+List all subscriptions for a specific user.
+
+```go
+subscriptions, err := alertsClient.GetUserSubscriptions(ctx, &services.GetUserSubscriptionsInput{
+    UserID: "user-123",
+})
+if err != nil {
+    // Handle error
+}
+
+for _, sub := range subscriptions {
+    fmt.Printf("Subscription ID: %s, Channel: %s\n", sub.ID, sub.Channel)
+}
+```
+
+### Subscribe to Events
+
+Create a new subscription for a user to receive notifications.
+
+```go
+import (
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+)
+
+subscriptions, err := alertsClient.Subscribe(ctx, &services.SubscribeInput{
+    UserID: "user-123",
+    Subscription: models.Subscription{
+        Channel: models.Email,
+        ChannelConfig: map[string]interface{}{
+            "email": "user@example.com",
+        },
+        Conditions: []models.Condition{
+            {
+                Type: models.CertificateExpiring,
+                Config: map[string]interface{}{
+                    "days_before_expiration": 30,
+                },
+            },
+        },
+    },
+})
+if err != nil {
+    // Handle error
+}
+
+fmt.Printf("Created subscription: %s\n", subscriptions[0].ID)
+```
+
+### Unsubscribe
+
+Remove a subscription for a user.
+
+```go
+_, err := alertsClient.Unsubscribe(ctx, &services.UnsubscribeInput{
+    UserID:         "user-123",
+    SubscriptionID: "sub-456",
+})
+if err != nil {
+    // Handle error
+}
+
+fmt.Println("Successfully unsubscribed")
+```
+
+## Notification Channels
+
+The Alerts service supports multiple notification channels:
+
+<Tabs>
+  <Tab title="Email">
+    ```go
+    Channel: models.Email,
+    ChannelConfig: map[string]interface{}{
+        "email": "user@example.com",
+    }
+    ```
+  </Tab>
+  <Tab title="Microsoft Teams">
+    ```go
+    Channel: models.MSTeams,
+    ChannelConfig: map[string]interface{}{
+        "webhook_url": "https://outlook.office.com/webhook/...",
+    }
+    ```
+  </Tab>
+  <Tab title="Webhook">
+    ```go
+    Channel: models.Webhook,
+    ChannelConfig: map[string]interface{}{
+        "url": "https://api.example.com/notifications",
+        "headers": map[string]string{
+            "Authorization": "Bearer token",
+        },
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Subscription Conditions
+
+Configure conditions to control when notifications are triggered:
+
+### Certificate Expiring
+
+```go
+Condition{
+    Type: models.CertificateExpiring,
+    Config: map[string]interface{}{
+        "days_before_expiration": 30,
+    },
+}
+```
+
+### Certificate Revoked
+
+```go
+Condition{
+    Type: models.CertificateRevoked,
+    Config: map[string]interface{}{},
+}
+```
+
+### CA Status Change
+
+```go
+Condition{
+    Type: models.CAStatusChange,
+    Config: map[string]interface{}{
+        "status": "EXPIRED",
+    },
+}
+```
+
+## Error Handling
+
+```go
+subscriptions, err := alertsClient.GetUserSubscriptions(ctx, &services.GetUserSubscriptionsInput{
+    UserID: "user-123",
+})
+if err != nil {
+    switch {
+    case strings.Contains(err.Error(), "not found"):
+        // User has no subscriptions
+    case strings.Contains(err.Error(), "unauthorized"):
+        // Authentication error
+    default:
+        // Handle other errors
+    }
+    return err
+}
+```
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "net/http"
+
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/models"
+    "github.com/lamassuiot/lamassuiot/core/v3/pkg/services"
+    "github.com/lamassuiot/lamassuiot/sdk/v3"
+)
+
+func main() {
+    // Initialize client
+    httpClient := &http.Client{}
+    alertsClient := sdk.NewHttpAlertsClient(httpClient, "https://api.lamassu.io/api/alerts")
+    ctx := context.Background()
+
+    // Subscribe to certificate expiration notifications
+    subscriptions, err := alertsClient.Subscribe(ctx, &services.SubscribeInput{
+        UserID: "admin@example.com",
+        Subscription: models.Subscription{
+            Channel: models.Email,
+            ChannelConfig: map[string]interface{}{
+                "email": "admin@example.com",
+            },
+            Conditions: []models.Condition{
+                {
+                    Type: models.CertificateExpiring,
+                    Config: map[string]interface{}{
+                        "days_before_expiration": 30,
+                    },
+                },
+            },
+        },
+    })
+    if err != nil {
+        log.Fatalf("Failed to subscribe: %v", err)
+    }
+
+    fmt.Printf("Successfully subscribed: %s\n", subscriptions[0].ID)
+
+    // Get latest events
+    events, err := alertsClient.GetLatestEventsPerEventType(ctx, &services.GetLatestEventsPerEventTypeInput{})
+    if err != nil {
+        log.Fatalf("Failed to get events: %v", err)
+    }
+
+    fmt.Printf("Found %d event types\n", len(events))
+    for _, event := range events {
+        fmt.Printf("- %s: %v\n", event.EventType, event.Timestamp)
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Alerts API Reference" icon="bell" href="/api/alerts/overview">
+    Explore the complete Alerts API
+  </Card>
+  <Card title="Event Monitoring" icon="chart-line" href="/operations/monitoring">
+    Learn about monitoring and observability
+  </Card>
+</CardGroup>
